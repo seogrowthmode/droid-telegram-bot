@@ -1,0 +1,26 @@
+[Unit]
+Description=Droid Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/droid-telegram
+ExecStart=/usr/bin/python3 /opt/droid-telegram/bot.py
+Restart=always
+RestartSec=10
+
+# Environment variables - edit these or use an EnvironmentFile
+Environment=TELEGRAM_BOT_TOKEN=your-telegram-bot-token-here
+Environment=TELEGRAM_ALLOWED_USER_IDS=your-telegram-user-id
+Environment=FACTORY_API_KEY=your-factory-api-key-here
+Environment=DROID_PATH=/root/.local/bin/droid
+Environment=DROID_DEFAULT_CWD=/root
+Environment=DROID_LOG_FILE=/var/log/droid-telegram/bot.log
+Environment=DROID_SESSIONS_FILE=/var/lib/droid-telegram/sessions.json
+
+# Alternatively, use an environment file:
+# EnvironmentFile=/opt/droid-telegram/.env
+
+[Install]
+WantedBy=multi-user.target
