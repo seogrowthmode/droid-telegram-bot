@@ -62,10 +62,16 @@ session_headers = {}  # Store header message ids for active sessions
 active_session_per_user = {}  # user_id -> {session_id, cwd, last_msg_id} - fallback for non-reply messages
 pending_permissions = {}  # request_id -> {user_message, session_id, cwd, user_id, chat_id, original_msg_id}
 session_history = []  # List of all sessions with metadata for /session command
+session_autonomy = {}  # session_id -> "low"|"medium"|"high"|"unsafe" (default: off)
+
+# Context to prepend to messages so droid knows about bot features
+BOT_CONTEXT = """[Telegram Bot Context: You're running inside a Telegram bot. The user can use /new <path> to change the working directory for their session (e.g., /new ~/projects/myapp). Don't suggest using cd to change directories - instead tell them to use /new <path>.]
+
+"""
 
 def load_sessions():
     """Load sessions from JSON file"""
-    global sessions, active_session_per_user, session_history
+    global sessions, active_session_per_user, session_history, session_autonomy
     try:
         if os.path.exists(SESSIONS_FILE):
             with open(SESSIONS_FILE, 'r') as f:
@@ -73,7 +79,8 @@ def load_sessions():
                 sessions = {int(k): v for k, v in data.get("sessions", {}).items()}
                 active_session_per_user = {int(k): v for k, v in data.get("active_session_per_user", {}).items()}
                 session_history = data.get("session_history", [])
-                logger.info(f"Loaded {len(sessions)} sessions, {len(session_history)} history entries")
+                session_autonomy = data.get("session_autonomy", {})
+                logger.info(f"Loaded {len(sessions)} sessions, {len(session_history)} history entries, {len(session_autonomy)} autonomy settings")
     except Exception as e:
         logger.error(f"Failed to load sessions: {e}")
 
@@ -83,7 +90,8 @@ def save_sessions():
         data = {
             "sessions": {str(k): v for k, v in sessions.items()},
             "active_session_per_user": {str(k): v for k, v in active_session_per_user.items()},
-            "session_history": session_history[-100:]  # Keep last 100 sessions
+            "session_history": session_history[-100:],  # Keep last 100 sessions
+            "session_autonomy": session_autonomy
         }
         with open(SESSIONS_FILE, 'w') as f:
             json.dump(data, f, indent=2)
@@ -209,6 +217,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help - This help\n"
         "/new [path] - New session (optional directory)\n"
         "/session - List/switch sessions\n"
+        "/auto [level] - Set autonomy (off/low/medium/high/unsafe)\n"
         "/cwd - Show current working directory\n"
         f"/stream - Toggle live tool updates ({stream_status})\n"
         "/status - Bot and Droid status\n"
@@ -216,6 +225,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>💡 Tips:</b>\n"
         "• Live updates show which tools Droid uses\n"
         "• Sessions persist across messages\n"
+        "• Use /auto high to enable tool execution\n"
         "• Timeout is 5 minutes per request",
         parse_mode=ParseMode.HTML
     )
@@ -412,6 +422,52 @@ async def stream_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = "ON" if streaming_mode else "OFF"
     await update.message.reply_text(f"Live tool updates: {status}")
 
+async def auto_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set autonomy level for current session: /auto low|medium|high|unsafe"""
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    user_id = update.effective_user.id
+    args = update.message.text.split()[1:]  # Get args after /auto
+    
+    # Get current session
+    session_id = None
+    if user_id in active_session_per_user:
+        session_id = active_session_per_user[user_id].get("session_id")
+    
+    if not args:
+        # Show current level
+        current = session_autonomy.get(session_id, "off") if session_id else "off"
+        await update.message.reply_text(
+            f"Current autonomy: `{current}`\n\n"
+            f"Usage: `/auto <level>`\n"
+            f"Levels: `off` | `low` | `medium` | `high` | `unsafe`\n\n"
+            f"• off = read-only (no tool execution)\n"
+            f"• low = safe tools only\n"
+            f"• medium = most tools allowed\n"
+            f"• high = all tools, asks for risky ones\n"
+            f"• unsafe = skip all permission checks",
+            parse_mode="Markdown"
+        )
+        return
+    
+    level = args[0].lower()
+    valid_levels = ["off", "low", "medium", "high", "unsafe"]
+    
+    if level not in valid_levels:
+        await update.message.reply_text(f"Invalid level. Use: {', '.join(valid_levels)}")
+        return
+    
+    if not session_id:
+        await update.message.reply_text("No active session. Start one with /new first.")
+        return
+    
+    emoji = {"off": "👁", "low": "🔒", "medium": "🔓", "high": "⚡", "unsafe": "⚠️"}
+    
+    session_autonomy[session_id] = level
+    save_sessions()
+    await update.message.reply_text(f"{emoji.get(level, '')} Autonomy set to `{level}` for this session", parse_mode="Markdown")
+
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         return
@@ -537,7 +593,7 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 async def handle_permission_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Allow/Deny button presses for permission requests"""
+    """Handle Once/Always/Deny button presses for permission requests"""
     query = update.callback_query
     await query.answer()
     
@@ -549,7 +605,7 @@ async def handle_permission_callback(update: Update, context: ContextTypes.DEFAU
         return
     
     parts = data.split("_")
-    action = parts[1]
+    action = parts[1]  # once, always, or deny
     request_id = parts[2]
     
     if request_id not in pending_permissions:
@@ -562,7 +618,13 @@ async def handle_permission_callback(update: Update, context: ContextTypes.DEFAU
         await query.edit_message_text("❌ Action denied.")
         return
     
-    await query.edit_message_text("✓ Allowed. Re-running with permissions...")
+    # If "always", set this session to unsafe mode
+    if action == "always" and req["session_id"]:
+        session_autonomy[req["session_id"]] = "unsafe"
+        save_sessions()
+        await query.edit_message_text("✓ Session set to unsafe mode. Re-running...")
+    else:
+        await query.edit_message_text("✓ Allowed once. Re-running...")
     
     status_msg = await context.bot.send_message(
         chat_id=req["chat_id"],
@@ -599,6 +661,11 @@ async def handle_permission_callback(update: Update, context: ContextTypes.DEFAU
             "cwd": req["cwd"],
             "last_msg_id": reply_msg.message_id
         }
+        
+        # Propagate "always" to new session_id if it changed
+        if action == "always" and actual_session_id and actual_session_id != req["session_id"]:
+            session_autonomy[actual_session_id] = "unsafe"
+        
         save_sessions()
         
     except Exception as e:
@@ -610,10 +677,13 @@ async def handle_message_streaming_unsafe(user_message, session_id, status_msg, 
     env = os.environ.copy()
     working_dir = cwd or DEFAULT_CWD
     
-    cmd = [DROID_PATH, "exec", "--auto", "high", "--skip-permissions-unsafe", "--output-format", "stream-json"]
+    cmd = [DROID_PATH, "exec", "--skip-permissions-unsafe", "--output-format", "stream-json"]
     if session_id:
         cmd.extend(["-s", session_id])
-    cmd.append(user_message)
+    
+    # Add bot context on first message of session so droid knows about /new command
+    message_with_context = BOT_CONTEXT + user_message if not session_id else user_message
+    cmd.append(message_with_context)
     
     logger.info(f"Running droid UNSAFE in cwd: {working_dir}")
     
@@ -763,19 +833,25 @@ def extract_session_id(line):
             pass
     return None
 
-async def handle_message_streaming(user_message, session_id, status_msg, cwd=None):
+async def handle_message_streaming(user_message, session_id, status_msg, cwd=None, autonomy_level="off"):
     """Handle message with streaming tool updates. Returns (response, session_id)"""
     
     env = os.environ.copy()
     working_dir = cwd or DEFAULT_CWD
     
-    cmd = [DROID_PATH, "exec", "--auto", "high", "--output-format", "stream-json"]
+    cmd = [DROID_PATH, "exec"]
+    if autonomy_level != "off":
+        cmd.extend(["--auto", autonomy_level])
+    cmd.extend(["--output-format", "stream-json"])
     if session_id:
         cmd.extend(["-s", session_id])
         logger.info(f"Continuing session: {session_id}")
-    cmd.append(user_message)
     
-    logger.info(f"Running droid in cwd: {working_dir}")
+    # Add bot context on first message of session so droid knows about /new command
+    message_with_context = BOT_CONTEXT + user_message if not session_id else user_message
+    cmd.append(message_with_context)
+    
+    logger.info(f"Running droid in cwd: {working_dir} with autonomy={autonomy_level}")
     
     process = subprocess.Popen(
         cmd,
@@ -883,16 +959,23 @@ async def handle_message_streaming(user_message, session_id, status_msg, cwd=Non
     
     return final_response.strip(), new_session_id
 
-async def handle_message_simple(user_message, session_id, cwd=None):
+async def handle_message_simple(user_message, session_id, cwd=None, autonomy_level="off"):
     """Handle message without streaming. Returns (response, session_id)"""
     
     env = os.environ.copy()
     working_dir = cwd or DEFAULT_CWD
     
-    cmd = [DROID_PATH, "exec", "--auto", "high"]
+    cmd = [DROID_PATH, "exec"]
+    if autonomy_level != "off":
+        cmd.extend(["--auto", autonomy_level])
     if session_id:
         cmd.extend(["-s", session_id])
-    cmd.append(user_message)
+    
+    # Add bot context on first message of session so droid knows about /new command
+    message_with_context = BOT_CONTEXT + user_message if not session_id else user_message
+    cmd.append(message_with_context)
+    
+    logger.info(f"Running droid in cwd: {working_dir} with autonomy={autonomy_level}")
     
     result = subprocess.run(
         cmd,
@@ -944,16 +1027,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     short_cwd = session_cwd.replace(os.path.expanduser("~"), "~")
     short_session = session_id[:8] if session_id else "new"
-    status_text = f"Working in {short_cwd}" if streaming_mode else f"Thinking in {short_cwd}"
+    
+    # Get autonomy level for this session (default: off = read-only)
+    autonomy_level = session_autonomy.get(session_id, "off") if session_id else "off"
+    
+    level_emoji = {"off": "👁", "low": "🔒", "medium": "🔓", "high": "⚡", "unsafe": "⚠️"}
+    if autonomy_level != "off":
+        status_text = f"Working in {short_cwd} {level_emoji.get(autonomy_level, '')}({autonomy_level})"
+    else:
+        status_text = f"Working in {short_cwd}" if streaming_mode else f"Thinking in {short_cwd}"
     if is_continuation and session_id:
         status_text += f" (session {short_session})"
     status_msg = await update.message.reply_text(status_text)
     
     try:
-        if streaming_mode:
-            response, new_session_id = await handle_message_streaming(user_message, session_id, status_msg, session_cwd)
+        if autonomy_level == "unsafe":
+            # Session has unsafe mode - skip all permission checks
+            response, new_session_id = await handle_message_streaming_unsafe(user_message, session_id, status_msg, session_cwd)
+        elif streaming_mode:
+            response, new_session_id = await handle_message_streaming(user_message, session_id, status_msg, session_cwd, autonomy_level)
         else:
-            response, new_session_id = await handle_message_simple(user_message, session_id, session_cwd)
+            response, new_session_id = await handle_message_simple(user_message, session_id, session_cwd, autonomy_level)
         
         response = response or "No response from Droid"
         
@@ -973,15 +1067,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             keyboard = [
                 [
-                    InlineKeyboardButton("✓ Allow", callback_data=f"perm_allow_{request_id}"),
-                    InlineKeyboardButton("✗ Deny", callback_data=f"perm_deny_{request_id}")
+                    InlineKeyboardButton("Once", callback_data=f"perm_once_{request_id}"),
+                    InlineKeyboardButton("Always", callback_data=f"perm_always_{request_id}"),
+                    InlineKeyboardButton("Deny", callback_data=f"perm_deny_{request_id}")
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await update.message.reply_text(
-                "⚠️ Droid needs elevated permissions to proceed.\n\n"
-                "This action requires `--skip-permissions-unsafe` flag.",
+                "⚠️ Droid needs elevated permissions.\n\n"
+                "• *Once* - allow this action only\n"
+                "• *Always* - set session to unsafe mode\n"
+                "• *Deny* - cancel this action",
                 reply_markup=reply_markup,
                 parse_mode="Markdown"
             )
@@ -1010,6 +1107,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if actual_session_id and not is_continuation:
             add_to_session_history(actual_session_id, session_cwd, user_message)
         
+        # Propagate autonomy level to new session_id if it changed (and not default)
+        if autonomy_level != "off" and actual_session_id and actual_session_id != session_id:
+            session_autonomy[actual_session_id] = autonomy_level
+        
         save_sessions()
         logger.info(f"Response sent ({len(response)} chars)")
         
@@ -1028,6 +1129,7 @@ def main():
     app.add_handler(CommandHandler("new", new_session))
     app.add_handler(CommandHandler("cwd", cwd_command))
     app.add_handler(CommandHandler("stream", stream_toggle))
+    app.add_handler(CommandHandler("auto", auto_command))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("session", session_command))
     app.add_handler(CommandHandler("git", git_command))

@@ -8,6 +8,7 @@ A Telegram bot that interfaces with [Factory's Droid CLI](https://factory.ai), a
 - ⚡ **Live Streaming** - Watch tool calls in real-time as Droid works
 - 📂 **Session Management** - Persistent sessions with working directory context
 - 🔐 **Access Control** - Restrict bot access to specific Telegram users
+- 🎚️ **Autonomy Levels** - Control how much freedom Droid has (off/low/medium/high/unsafe)
 - 🔧 **Git Integration** - Quick `/git` commands for common operations
 
 ## Prerequisites
@@ -87,17 +88,31 @@ TELEGRAM_BOT_TOKEN=your-token TELEGRAM_ALLOWED_USER_IDS=123456 python bot.py
 | `/new [path]` | Start new session (optionally in directory) |
 | `/session` | List recent sessions |
 | `/session <id>` | Switch to a session |
+| `/auto [level]` | Set autonomy level (off/low/medium/high/unsafe) |
 | `/cwd` | Show current working directory |
 | `/stream` | Toggle live tool updates on/off |
 | `/status` | Bot and Droid status |
 | `/git [args]` | Run git commands in current directory |
+
+## Autonomy Levels
+
+Control how much freedom Droid has with the `/auto` command:
+
+| Level | Description |
+|-------|-------------|
+| `off` | Read-only mode (default) - no tool execution |
+| `low` | Safe tools only |
+| `medium` | Most tools allowed |
+| `high` | All tools, asks for risky ones |
+| `unsafe` | Skip all permission checks |
 
 ## Usage Tips
 
 - **Reply to continue** - Reply to any bot message to continue that session
 - **Working directories** - Use `/new ~/projects/myapp` to set context
 - **Live updates** - Watch Droid's progress with streaming enabled (default)
-- **Permission prompts** - Bot shows Allow/Deny buttons for elevated permissions
+- **Autonomy control** - Use `/auto high` to enable tool execution
+- **Permission prompts** - Bot shows Once/Always/Deny buttons for elevated permissions
 
 ## Production Deployment
 
