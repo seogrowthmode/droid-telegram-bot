@@ -35,6 +35,9 @@ SESSIONS_FILE = os.environ.get("DROID_SESSIONS_FILE", "/var/lib/droid-telegram/s
 DROID_PATH = os.environ.get("DROID_PATH", "droid")
 DEFAULT_CWD = os.environ.get("DROID_DEFAULT_CWD", os.path.expanduser("~"))
 
+# OpenAI API for session naming (optional - falls back to default naming if not set)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+
 # =============================================================================
 # NEW FEATURE: Project Shortcuts
 # =============================================================================
@@ -155,6 +158,68 @@ VOICE_TRIGGERS = {
         "remove all tasks", "clear the queue", "empty the queue"
     ]
 }
+
+# =============================================================================
+# LLM SESSION NAMING
+# =============================================================================
+def generate_session_name(first_message: str, cwd: str = None) -> str:
+    """
+    Use LLM to generate a short, descriptive session name based on the first message.
+    Falls back to random ID if OpenAI isn't configured or fails.
+    """
+    if not OPENAI_API_KEY or not first_message:
+        return f"tg-{uuid.uuid4().hex[:8]}"
+    
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        # Extract project name from cwd for context
+        project_context = ""
+        if cwd:
+            project_name = os.path.basename(cwd.rstrip('/'))
+            project_context = f" (project: {project_name})"
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """Generate a very short session name (2-4 words, max 25 chars) that describes the task.
+Use PascalCase with no spaces. Be specific but concise.
+Examples: "FixMobileNav", "AddDarkMode", "RefactorAuth", "UpdateDashboard", "DebugAPIError"
+Output ONLY the name, nothing else."""
+                },
+                {
+                    "role": "user",
+                    "content": f"Task{project_context}: {first_message[:200]}"
+                }
+            ],
+            max_tokens=30,
+            temperature=0.3
+        )
+        
+        name = response.choices[0].message.content.strip()
+        # Clean up the name - remove quotes, spaces, special chars
+        name = re.sub(r'[^a-zA-Z0-9]', '', name)
+        
+        if name and len(name) >= 3:
+            return name[:25]  # Cap at 25 chars
+        
+    except ImportError:
+        logging.warning("OpenAI package not installed - using default session naming")
+    except Exception as e:
+        logging.warning(f"Failed to generate session name via LLM: {e}")
+    
+    # Fallback to random ID
+    return f"tg-{uuid.uuid4().hex[:8]}"
+
+
+async def generate_session_name_async(first_message: str, cwd: str = None) -> str:
+    """Async wrapper for generate_session_name"""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, generate_session_name, first_message, cwd)
+
 
 def detect_voice_intent(text: str) -> tuple:
     """
@@ -2064,6 +2129,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session_id = active.get("session_id")
         session_cwd = active.get("cwd") or DEFAULT_CWD
         is_continuation = bool(session_id)
+        
+        # Try to find session_data from sessions dict using last_msg_id
+        last_msg_id = active.get("last_msg_id")
+        if last_msg_id and last_msg_id in sessions:
+            session_data = sessions[last_msg_id]
+    
+    # Check if this is the first message for an awaiting session - generate LLM name
+    is_first_message = False
+    if session_data and isinstance(session_data, dict) and session_data.get("awaiting_first_message"):
+        is_first_message = True
+        old_session_id = session_id
+        
+        # Generate LLM-based session name
+        new_name = await generate_session_name_async(user_message, session_cwd)
+        logger.info(f"Generated LLM session name: {new_name} (was: {old_session_id})")
+        
+        # Migrate session data from old ID to new name
+        if old_session_id and old_session_id != new_name:
+            # Copy settings to new session ID
+            if old_session_id in session_autonomy:
+                session_autonomy[new_name] = session_autonomy.pop(old_session_id)
+            if old_session_id in session_models:
+                session_models[new_name] = session_models.pop(old_session_id)
+            if old_session_id in session_git_sync:
+                session_git_sync[new_name] = session_git_sync.pop(old_session_id)
+        
+        session_id = new_name
+        session_data["session_id"] = new_name
+        session_data["awaiting_first_message"] = False
+        
+        # Update active session
+        if user_id in active_session_per_user:
+            active_session_per_user[user_id]["session_id"] = new_name
 
     # Auto git pull before task
     sync_settings = session_git_sync.get(session_id, {"pull": AUTO_GIT_PULL, "push": AUTO_GIT_PUSH})
@@ -2078,6 +2176,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     model = session_models.get(session_id) if session_id else None
 
     status_text = f"Working in {short_cwd}"
+    if is_first_message and session_id:
+        status_text = f"🆔 {session_id}\n{status_text}"
     if git_pull_msg:
         status_text += git_pull_msg
     status_msg = await update.message.reply_text(status_text)
