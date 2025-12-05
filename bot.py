@@ -451,22 +451,26 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines = ["<b>📁 Project Shortcuts</b>\n"]
             for shortcut, path in PROJECT_SHORTCUTS.items():
                 lines.append(f"<code>/proj {shortcut}</code> → {path}")
-            lines.append(f"\n<b>Usage:</b> <code>/proj shortcut [auto] [model]</code>")
+            lines.append(f"\n<b>Usage:</b> <code>/proj shortcut [auto] [model] [sync]</code>")
             lines.append(f"<b>Autonomy:</b> off, low, medium, high, unsafe")
             lines.append(f"<b>Models:</b> {model_list}")
-            lines.append(f"\n<b>Example:</b> <code>/proj chadix high sonnet</code>")
+            lines.append(f"<b>Sync:</b> add 'sync' to auto-push after each task")
+            lines.append(f"\n<b>Example:</b> <code>/proj chadix high sonnet sync</code>")
             await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
         return
     
-    # Parse arguments: /proj <shortcut> [autonomy] [model]
+    # Parse arguments: /proj <shortcut> [autonomy] [model] [sync]
     shortcut = args[0].lower()
     autonomy_level = "off"
     model_shortcut = None
+    auto_sync = False
     
     for arg in args[1:]:
         arg_lower = arg.lower()
         if arg_lower in AUTONOMY_LEVELS:
             autonomy_level = arg_lower
+        elif arg_lower in ["sync", "push", "autopush"]:
+            auto_sync = True
         elif arg_lower in MODEL_SHORTCUTS or resolve_model(arg_lower):
             model_shortcut = arg_lower
     
@@ -503,10 +507,12 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     model_id = resolve_model(model_shortcut) if model_shortcut else None
     model_display = model_shortcut or "default"
     
-    # Set autonomy and model for this session
+    # Set autonomy, model, and git sync for this session
     session_autonomy[temp_session_id] = autonomy_level
     if model_id:
         session_models[temp_session_id] = model_id
+    if auto_sync:
+        session_git_sync[temp_session_id] = {"pull": True, "push": True}
     
     # Build status display
     auto_emoji = {"off": "👁", "low": "🔒", "medium": "🔓", "high": "⚡", "unsafe": "⚠️"}
@@ -518,6 +524,8 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     if model_id:
         status_lines.append(f"🤖 Model: {model_display}")
+    if auto_sync:
+        status_lines.append(f"📤 Git: auto-push ON")
     
     header_text = "\n".join(status_lines)
     header_msg = await update.message.reply_text(header_text)
