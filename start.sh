@@ -34,6 +34,11 @@ export DROID_AUTO_GIT_PUSH=$(grep '^DROID_AUTO_GIT_PUSH=' .env | cut -d'=' -f2-)
 # Handle JSON env var specially
 export DROID_PROJECT_SHORTCUTS='{"chadix":"~/dev/chadix-app-website"}'
 
+# Default project settings (high autonomy, opus model, sync on)
+export DROID_DEFAULT_AUTONOMY="high"
+export DROID_DEFAULT_MODEL="opus"
+export DROID_DEFAULT_SYNC="true"
+
 # Run bot and save PID to lock file
 python3 bot.py &
 BOT_PID=$!

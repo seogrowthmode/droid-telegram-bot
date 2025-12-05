@@ -21,6 +21,7 @@ import uuid
 import re
 import html
 import tempfile
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
 from telegram.constants import ParseMode
@@ -76,8 +77,14 @@ MODEL_SHORTCUTS = {
     "gemini": "gemini-3-pro-preview",
     "glm": "glm-4.6",
 }
-DEFAULT_MODEL = "opus"
 AUTONOMY_LEVELS = ["off", "low", "medium", "high", "unsafe"]
+
+# =============================================================================
+# DEFAULT PROJECT SETTINGS (apply to /proj and /add unless overridden)
+# =============================================================================
+DEFAULT_AUTONOMY = os.environ.get("DROID_DEFAULT_AUTONOMY", "high")
+DEFAULT_MODEL_SHORTCUT = os.environ.get("DROID_DEFAULT_MODEL", "opus")
+DEFAULT_SYNC = os.environ.get("DROID_DEFAULT_SYNC", "true").lower() == "true"
 
 def get_available_models():
     """Fetch available models from droid CLI"""
@@ -109,7 +116,7 @@ def get_available_models():
 def resolve_model(shortcut):
     """Resolve model shortcut to full model ID"""
     if not shortcut:
-        return MODEL_SHORTCUTS.get(DEFAULT_MODEL)
+        return MODEL_SHORTCUTS.get(DEFAULT_MODEL_SHORTCUT)
     shortcut = shortcut.lower()
     if shortcut in MODEL_SHORTCUTS:
         return MODEL_SHORTCUTS[shortcut]
@@ -153,6 +160,13 @@ session_autonomy = {}
 active_processes = {}
 session_git_sync = {}  # Track git sync settings per session
 session_models = {}  # Track model per session
+
+# =============================================================================
+# NEW FEATURE: Task Queue
+# =============================================================================
+task_queue = []  # List of queued tasks
+queue_running = False  # Is queue currently processing
+queue_paused = False  # Is queue paused
 
 BOT_CONTEXT = """[Telegram Bot Context: You're running inside a Telegram bot. The user can use /new <path> to change the working directory for their session (e.g., /new ~/projects/myapp). Don't suggest using cd to change directories - instead tell them to use /new <path>. They can also use /proj <shortcut> for quick project switching.]
 
@@ -451,20 +465,22 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines = ["<b>📁 Project Shortcuts</b>\n"]
             for shortcut, path in PROJECT_SHORTCUTS.items():
                 lines.append(f"<code>/proj {shortcut}</code> → {path}")
-            lines.append(f"\n<b>Usage:</b> <code>/proj shortcut [auto] [model] [sync] [@name]</code>")
-            lines.append(f"<b>Autonomy:</b> off, low, medium, high, unsafe")
-            lines.append(f"<b>Models:</b> {model_list}")
-            lines.append(f"<b>Sync:</b> add 'sync' to auto-push after each task")
-            lines.append(f"<b>Name:</b> @myname to name the session")
-            lines.append(f"\n<b>Example:</b> <code>/proj chadix high sonnet sync @homepage</code>")
+            lines.append(f"\n<b>Defaults:</b> {DEFAULT_AUTONOMY}, {DEFAULT_MODEL_SHORTCUT}, {'sync' if DEFAULT_SYNC else 'nosync'}")
+            lines.append(f"\n<b>Usage:</b> <code>/proj shortcut [@name]</code>")
+            lines.append(f"<b>Override:</b> add autonomy/model/nosync to change")
+            lines.append(f"\n<b>Examples:</b>")
+            lines.append(f"<code>/proj chadix</code> (uses defaults)")
+            lines.append(f"<code>/proj chadix @homepage</code> (with name)")
+            lines.append(f"<code>/proj chadix sonnet nosync</code> (override)")
             await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
         return
     
     # Parse arguments: /proj <shortcut> [autonomy] [model] [sync] [@name]
+    # Uses defaults: high autonomy, opus model, sync on
     shortcut = args[0].lower()
-    autonomy_level = "off"
-    model_shortcut = None
-    auto_sync = False
+    autonomy_level = DEFAULT_AUTONOMY
+    model_shortcut = DEFAULT_MODEL_SHORTCUT
+    auto_sync = DEFAULT_SYNC
     session_name = None
     
     for arg in args[1:]:
@@ -475,6 +491,8 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             autonomy_level = arg_lower
         elif arg_lower in ["sync", "push", "autopush"]:
             auto_sync = True
+        elif arg_lower in ["nosync", "nopush"]:
+            auto_sync = False
         elif arg_lower in MODEL_SHORTCUTS or resolve_model(arg_lower):
             model_shortcut = arg_lower
     
@@ -710,6 +728,297 @@ async def push_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"✓ {msg}")
     else:
         await status_msg.edit_text(f"❌ {msg}")
+
+# =============================================================================
+# NEW FEATURE: Task Queue
+# =============================================================================
+
+async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add a task to the queue: /add <project> [high/medium] [model] [sync] <task description>"""
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    text = update.message.text[4:].strip()  # Remove "/add"
+    if not text:
+        await update.message.reply_text(
+            "<b>📋 Add Task to Queue</b>\n\n"
+            "<b>Usage:</b> <code>/add project [settings] task</code>\n\n"
+            "<b>Examples:</b>\n"
+            "<code>/add chadix Build the homepage</code>\n"
+            "<code>/add chadix high sonnet Fix login bug</code>\n"
+            "<code>/add chadix high sync Create user dashboard</code>\n\n"
+            "<b>Settings:</b> autonomy (high/medium/low), model (sonnet/opus), sync",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    parts = text.split()
+    if len(parts) < 2:
+        await update.message.reply_text("❌ Need project and task. Example: /add chadix Build feature X")
+        return
+    
+    project = parts[0].lower()
+    if project not in PROJECT_SHORTCUTS:
+        available = ", ".join(PROJECT_SHORTCUTS.keys())
+        await update.message.reply_text(f"❌ Unknown project: {project}\n\nAvailable: {available}")
+        return
+    
+    # Parse settings and task description (uses global defaults)
+    autonomy = DEFAULT_AUTONOMY
+    model = DEFAULT_MODEL_SHORTCUT
+    sync = DEFAULT_SYNC
+    task_words = []
+    
+    for part in parts[1:]:
+        part_lower = part.lower()
+        if part_lower in AUTONOMY_LEVELS:
+            autonomy = part_lower
+        elif part_lower in ["sync", "push"]:
+            sync = True
+        elif part_lower in ["nosync", "nopush"]:
+            sync = False
+        elif part_lower in MODEL_SHORTCUTS:
+            model = part_lower
+        else:
+            task_words.append(part)
+    
+    task_description = " ".join(task_words)
+    if not task_description:
+        await update.message.reply_text("❌ Need a task description")
+        return
+    
+    # Create task
+    task = {
+        "id": str(uuid.uuid4())[:8],
+        "project": project,
+        "task": task_description,
+        "autonomy": autonomy,
+        "model": model,
+        "sync": sync,
+        "status": "pending",
+        "added": datetime.now().isoformat()
+    }
+    
+    task_queue.append(task)
+    position = len(task_queue)
+    
+    model_display = model or "default"
+    sync_display = "📤" if sync else ""
+    
+    await update.message.reply_text(
+        f"✅ Added to queue (#{position})\n\n"
+        f"📁 {project}\n"
+        f"📝 {task_description}\n"
+        f"⚡ {autonomy} | 🤖 {model_display} {sync_display}\n\n"
+        f"Use /queue to view, /run to start",
+        parse_mode=ParseMode.HTML
+    )
+
+
+async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View the task queue"""
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    if not task_queue:
+        await update.message.reply_text(
+            "📋 <b>Queue is empty</b>\n\n"
+            "Add tasks with:\n"
+            "<code>/add chadix Build feature X</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    lines = ["📋 <b>Task Queue</b>\n"]
+    
+    status_emoji = {"pending": "⏳", "running": "🔄", "completed": "✅", "failed": "❌"}
+    
+    for i, task in enumerate(task_queue, 1):
+        emoji = status_emoji.get(task["status"], "⏳")
+        sync_icon = "📤" if task.get("sync") else ""
+        lines.append(
+            f"{emoji} <b>#{i}</b> [{task['project']}] {task['task'][:40]}{'...' if len(task['task']) > 40 else ''} {sync_icon}"
+        )
+    
+    queue_status = "🔄 Running" if queue_running else ("⏸ Paused" if queue_paused else "⏹ Stopped")
+    lines.append(f"\n<b>Status:</b> {queue_status}")
+    lines.append("\n<b>Commands:</b> /run, /pause, /clear, /skip")
+    
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start processing the queue"""
+    global queue_running, queue_paused
+    
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    if not task_queue:
+        await update.message.reply_text("📋 Queue is empty. Add tasks with /add")
+        return
+    
+    pending_tasks = [t for t in task_queue if t["status"] == "pending"]
+    if not pending_tasks:
+        await update.message.reply_text("✅ All tasks completed! Use /clear to reset.")
+        return
+    
+    if queue_running:
+        await update.message.reply_text("🔄 Queue is already running")
+        return
+    
+    queue_running = True
+    queue_paused = False
+    
+    await update.message.reply_text(f"▶️ Starting queue ({len(pending_tasks)} tasks)...")
+    
+    # Process queue
+    await process_queue(update, context)
+
+
+async def process_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Process tasks in the queue"""
+    global queue_running, queue_paused
+    
+    user_id = update.effective_user.id
+    
+    while queue_running and not queue_paused:
+        # Find next pending task
+        pending = None
+        for task in task_queue:
+            if task["status"] == "pending":
+                pending = task
+                break
+        
+        if not pending:
+            queue_running = False
+            await update.message.reply_text("✅ Queue completed!")
+            return
+        
+        # Mark as running
+        pending["status"] = "running"
+        
+        # Resolve project path
+        project = pending["project"]
+        path = PROJECT_SHORTCUTS.get(project)
+        if not path:
+            pending["status"] = "failed"
+            continue
+        
+        resolved_cwd = os.path.expanduser(path)
+        
+        # Git pull if sync enabled
+        if pending.get("sync") and is_git_repo(resolved_cwd):
+            git_pull(resolved_cwd)
+        
+        # Create session
+        session_id = f"q-{pending['id']}"
+        autonomy = pending.get("autonomy", "high")
+        model = resolve_model(pending.get("model"))
+        
+        session_autonomy[session_id] = autonomy
+        if model:
+            session_models[session_id] = model
+        if pending.get("sync"):
+            session_git_sync[session_id] = {"pull": True, "push": True}
+        
+        # Update active session
+        active_session_per_user[user_id] = {
+            "session_id": session_id,
+            "cwd": resolved_cwd
+        }
+        
+        # Send status
+        short_cwd = resolved_cwd.replace(os.path.expanduser("~"), "~")
+        status_msg = await update.message.reply_text(
+            f"🔄 <b>Task #{task_queue.index(pending) + 1}</b>\n"
+            f"📁 {short_cwd}\n"
+            f"📝 {pending['task'][:50]}...\n\n"
+            f"Working...",
+            parse_mode=ParseMode.HTML
+        )
+        
+        try:
+            # Run the task
+            response, new_session_id = await handle_message_streaming(
+                pending["task"],
+                session_id,
+                status_msg,
+                resolved_cwd,
+                autonomy,
+                user_id=user_id,
+                model=model
+            )
+            
+            response = response or "No response"
+            if len(response) > 3000:
+                response = response[:3000] + "\n\n[truncated]"
+            
+            await status_msg.delete()
+            await send_formatted_message(update.message, f"✅ <b>Task completed:</b> {pending['task'][:30]}...\n\n{response}")
+            
+            # Git push if sync enabled
+            if pending.get("sync") and is_git_repo(resolved_cwd) and git_has_changes(resolved_cwd):
+                success, msg = git_commit_and_push(resolved_cwd, f"Task: {pending['task'][:50]}")
+                if success:
+                    await update.message.reply_text(f"📤 Pushed: {msg}")
+            
+            pending["status"] = "completed"
+            
+        except Exception as e:
+            pending["status"] = "failed"
+            await status_msg.edit_text(f"❌ Task failed: {str(e)}")
+            logger.error(f"Queue task failed: {e}")
+        
+        # Small delay between tasks
+        await asyncio.sleep(2)
+    
+    queue_running = False
+
+
+async def pause_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pause the queue"""
+    global queue_paused, queue_running
+    
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    if not queue_running:
+        await update.message.reply_text("Queue is not running")
+        return
+    
+    queue_paused = True
+    await update.message.reply_text("⏸ Queue paused. Use /run to resume.")
+
+
+async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Clear the queue"""
+    global task_queue, queue_running, queue_paused
+    
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    count = len(task_queue)
+    task_queue = []
+    queue_running = False
+    queue_paused = False
+    
+    await update.message.reply_text(f"🗑 Cleared {count} tasks from queue")
+
+
+async def skip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Skip the current task"""
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    for task in task_queue:
+        if task["status"] == "running":
+            task["status"] = "failed"
+            await update.message.reply_text(f"⏭ Skipped: {task['task'][:30]}...")
+            return
+    
+    await update.message.reply_text("No task currently running")
+
 
 # =============================================================================
 # NEW FEATURE: Voice Message Support
@@ -1462,6 +1771,14 @@ def main():
     app.add_handler(CommandHandler("sync", sync_command))
     app.add_handler(CommandHandler("pull", pull_command))
     app.add_handler(CommandHandler("push", push_command))
+    
+    # Queue commands
+    app.add_handler(CommandHandler("add", add_command))
+    app.add_handler(CommandHandler("queue", queue_command))
+    app.add_handler(CommandHandler("run", run_command))
+    app.add_handler(CommandHandler("pause", pause_command))
+    app.add_handler(CommandHandler("clear", clear_command))
+    app.add_handler(CommandHandler("skip", skip_command))
     
     # Callback handlers for inline buttons
     app.add_handler(CallbackQueryHandler(handle_settings_callback, pattern="^(setauto_|setmodel_)"))
