@@ -793,6 +793,9 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "cwd": resolved_cwd,
         "last_msg_id": header_msg.message_id
     }
+    
+    # Add to session history so it shows in /session
+    add_to_session_history(temp_session_id, resolved_cwd, f"(project: {shortcut})")
     save_sessions()
     
     # Quick action buttons for phone users
@@ -1317,6 +1320,10 @@ async def route_voice_intent(update: Update, context: ContextTypes.DEFAULT_TYPE,
             "session_id": session_id,
             "cwd": resolved_cwd
         }
+        
+        # Add to session history
+        add_to_session_history(session_id, resolved_cwd, f"(voice: {project})")
+        save_sessions()
         
         short_cwd = resolved_cwd.replace(os.path.expanduser("~"), "~")
         await status_msg.edit_text(
