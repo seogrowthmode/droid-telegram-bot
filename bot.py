@@ -413,29 +413,111 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     shortcuts_list = ", ".join(PROJECT_SHORTCUTS.keys()) if PROJECT_SHORTCUTS else "(none)"
+    first_project = list(PROJECT_SHORTCUTS.keys())[0] if PROJECT_SHORTCUTS else "myapp"
     
     await update.message.reply_text(
-        "🤖 <b>Droid Telegram Bot - Enhanced</b>\n\n"
-        f"<b>Defaults:</b> {DEFAULT_AUTONOMY}, {DEFAULT_MODEL_SHORTCUT}, {'sync' if DEFAULT_SYNC else 'nosync'}\n\n"
-        "<b>📁 Quick Start:</b>\n"
-        f"<code>/proj {list(PROJECT_SHORTCUTS.keys())[0] if PROJECT_SHORTCUTS else 'myapp'}</code> - Start working\n"
-        "<code>/add project Task description</code> - Queue task\n\n"
-        "<b>⚙️ Project Commands:</b>\n"
-        "/proj - Switch project (uses defaults)\n"
-        "/new [path] - New session in directory\n"
-        "/session - List/switch sessions\n\n"
-        "<b>📋 Queue Commands:</b>\n"
-        "/add - Add task to queue\n"
-        "/queue - View queue\n"
-        "/run - Start processing\n"
-        "/pause /skip /clear - Control queue\n\n"
-        "<b>🔧 Other:</b>\n"
-        "/sync /pull /push - Git controls\n"
-        "/auto [level] - Set autonomy\n"
-        "/status - Bot status\n"
-        "/stop - Stop current task\n\n"
-        f"<b>Projects:</b> {shortcuts_list}\n\n"
-        "💡 Voice messages supported!",
+        "🤖 <b>Droid Telegram Bot</b>\n\n"
+        f"<b>⚡ Defaults:</b> {DEFAULT_AUTONOMY} | {DEFAULT_MODEL_SHORTCUT} | {'sync' if DEFAULT_SYNC else 'nosync'}\n\n"
+        
+        "<b>📁 Projects:</b>\n"
+        f"<code>/proj {first_project}</code> - Start with defaults\n"
+        f"<code>/proj {first_project} @taskname</code> - Named session\n"
+        f"<code>/proj {first_project} nosync</code> - No auto-push\n\n"
+        
+        "<b>📋 Task Queue:</b>\n"
+        f"<code>/add {first_project} Build feature X</code>\n"
+        f"<code>/add {first_project} Fix the login bug</code>\n"
+        "<code>/run</code> - Process all queued tasks\n\n"
+        
+        "<b>🎤 Voice:</b> Just send a voice message!\n\n"
+        
+        "<b>📂 Git:</b> /pull /push /sync\n"
+        "<b>⚙️ Session:</b> /new /session /auto /stop\n"
+        "<b>📊 Info:</b> /status /cwd /queue\n\n"
+        
+        f"<b>Projects:</b> {shortcuts_list}\n"
+        "<b>Models:</b> opus, sonnet, haiku, gpt, codex, gemini\n\n"
+        "Type /features for full details",
+        parse_mode=ParseMode.HTML
+    )
+
+
+async def features_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show all bot features in detail"""
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    shortcuts_display = "\n".join([f"  • <code>{k}</code> → {v}" for k, v in PROJECT_SHORTCUTS.items()]) if PROJECT_SHORTCUTS else "  (none configured)"
+    
+    await update.message.reply_text(
+        "🤖 <b>FULL FEATURE LIST</b>\n\n"
+        
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>⚡ DEFAULT SETTINGS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• Autonomy: <b>{DEFAULT_AUTONOMY}</b>\n"
+        f"• Model: <b>{DEFAULT_MODEL_SHORTCUT}</b>\n"
+        f"• Auto-sync: <b>{'ON' if DEFAULT_SYNC else 'OFF'}</b>\n"
+        "These apply to /proj and /add unless overridden\n\n"
+        
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>📁 PROJECT SHORTCUTS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{shortcuts_display}\n\n"
+        "<code>/proj name</code> - Switch (uses defaults)\n"
+        "<code>/proj name @session</code> - With session name\n"
+        "<code>/proj name sonnet</code> - Override model\n"
+        "<code>/proj name nosync</code> - Disable auto-push\n"
+        "<code>/proj name low haiku nosync</code> - Multiple overrides\n\n"
+        
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>📋 TASK QUEUE</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "Queue up multiple tasks, run them all!\n\n"
+        "<code>/add project Task description</code> - Add task\n"
+        "<code>/add project medium Fix bug</code> - With autonomy\n"
+        "<code>/queue</code> - View all tasks\n"
+        "<code>/run</code> - Start processing queue\n"
+        "<code>/pause</code> - Pause processing\n"
+        "<code>/skip</code> - Skip current task\n"
+        "<code>/clear</code> - Clear all tasks\n\n"
+        
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>🎤 VOICE MESSAGES</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "Send voice → Whisper transcribes → Droid executes\n"
+        "Perfect for quick mobile coding!\n\n"
+        
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>🔄 AUTO GIT SYNC</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "When sync is ON (default):\n"
+        "• Auto <code>git pull</code> before each task\n"
+        "• Auto <code>git commit + push</code> after each task\n\n"
+        "<code>/sync</code> - Toggle sync on/off\n"
+        "<code>/pull</code> - Manual pull\n"
+        "<code>/push [msg]</code> - Commit and push\n\n"
+        
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>🤖 MODELS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "• <code>opus</code> - Claude Opus (default)\n"
+        "• <code>sonnet</code> - Claude Sonnet\n"
+        "• <code>haiku</code> - Claude Haiku (fast)\n"
+        "• <code>gpt</code> - GPT-4.1\n"
+        "• <code>codex</code> - Codex-1\n"
+        "• <code>gemini</code> - Gemini Pro\n\n"
+        
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>⚙️ OTHER COMMANDS</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "<code>/new [path]</code> - New session in directory\n"
+        "<code>/session</code> - List/switch sessions\n"
+        "<code>/auto [level]</code> - Set autonomy level\n"
+        "<code>/status</code> - Bot and session status\n"
+        "<code>/stop</code> - Stop running task\n"
+        "<code>/cwd</code> - Show current directory\n"
+        "<code>/git [cmd]</code> - Run git commands\n",
         parse_mode=ParseMode.HTML
     )
 
@@ -1756,6 +1838,7 @@ def main():
     # Original commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("features", features_command))
     app.add_handler(CommandHandler("new", new_session))
     app.add_handler(CommandHandler("cwd", cwd_command))
     app.add_handler(CommandHandler("stream", stream_toggle))

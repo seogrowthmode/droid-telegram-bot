@@ -15,7 +15,8 @@ README_FILE = os.path.join(PROJECT_DIR, "README.md")
 COMMAND_DOCS = {
     # Core commands
     "start": ("Welcome message and quick help", "core"),
-    "help": ("Detailed help", "core"),
+    "help": ("Quick help and examples", "core"),
+    "features": ("Full feature list with all details", "core"),
     "new": ("Start new session (optionally in directory)", "core"),
     "session": ("List/switch sessions", "core"),
     "auto": ("Set autonomy level (off/low/medium/high/unsafe)", "core"),

@@ -117,7 +117,8 @@ Note: First voice message may be slow as Whisper downloads the model (~140MB).
 | Command | Description |
 |---------|-------------|
 | `/start` | Welcome message and quick help |
-| `/help` | Detailed help |
+| `/help` | Quick help and examples |
+| `/features` | Full feature list with all details |
 | `/new` | Start new session (optionally in directory) |
 | `/cwd` | Show current working directory |
 | `/stream` | Toggle live tool updates on/off |

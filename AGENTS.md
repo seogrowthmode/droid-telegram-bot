@@ -1,62 +1,128 @@
+<coding_guidelines>
 # Droid Telegram Bot - Development Guidelines
 
-## Mandatory Rules
+## MANDATORY: Update Docs on Every Change
 
-### 1. README Updates
-**ALWAYS update README.md when:**
-- Adding new commands or features
-- Changing command syntax or behavior
-- Adding new environment variables
-- Modifying model shortcuts or autonomy levels
+When adding/modifying features, you MUST update ALL THREE:
 
-The pre-commit hook runs `scripts/update-readme.py` automatically, but you must also:
-- Update the "Enhanced Commands" table manually for new features
-- Update "Model Shortcuts" table if models change
-- Update "Environment Variables" table for new config options
+1. **`scripts/update-readme.py`** - Add command to COMMAND_DOCS dict
+2. **`bot.py` help_command()** - Update the /help text (around line 411)
+3. **Commit and push** - Pre-commit hook auto-updates README.md
 
-### 2. Git Workflow
-- Always commit with descriptive messages
-- Include `Co-authored-by: factory-droid[bot]` in commits
-- Push changes after completing features
-- Run syntax check before committing: `python3 -m py_compile bot.py`
+### Pre-commit Hook
+The hook at `.github/hooks/pre-commit` automatically:
+- Runs `scripts/update-readme.py` when bot.py changes
+- Stages README.md if it was updated
 
-### 3. Code Style
-- Keep functions focused and single-purpose
-- Add section headers with `# ===` separators for major features
-- Log important events with `logger.info()` or `logger.error()`
-- Handle exceptions gracefully with user-friendly messages
+Install with: `./scripts/setup-hooks.sh`
 
-### 4. Testing
-- Test new features in Telegram before pushing
-- Verify bot restarts cleanly after changes
-- Check `bot.log` for errors after testing
+## Current Bot Features
+
+### Default Settings (applied automatically)
+```python
+DEFAULT_AUTONOMY = "high"      # From DROID_DEFAULT_AUTONOMY env
+DEFAULT_MODEL_SHORTCUT = "opus" # From DROID_DEFAULT_MODEL env  
+DEFAULT_SYNC = True            # From DROID_DEFAULT_SYNC env
+```
+
+### Commands Reference
+
+**Project Commands:**
+- `/proj <shortcut>` - Switch project (uses defaults: high, opus, sync)
+- `/proj <shortcut> @name` - With custom session name
+- `/proj <shortcut> nosync` - Override: disable sync
+- `/proj <shortcut> sonnet` - Override: use different model
+- `/new [path]` - New session in directory
+- `/session` - List/switch sessions
+
+**Queue System:**
+- `/add <project> <task>` - Add task to queue (uses defaults)
+- `/add <project> medium sonnet <task>` - With overrides
+- `/queue` - View all queued tasks
+- `/run` - Start processing queue
+- `/pause` - Pause queue processing
+- `/skip` - Skip current task
+- `/clear` - Clear all tasks
+
+**Git Commands:**
+- `/sync` - Toggle auto git pull/push
+- `/pull` - Manual git pull
+- `/push [msg]` - Commit and push with message
+
+**Other:**
+- `/auto [level]` - Set autonomy (off/low/medium/high/unsafe)
+- `/status` - Bot and session status
+- `/stop` - Stop running task
+- `/cwd` - Show current directory
+- `/git [cmd]` - Run git commands
+
+**Special Features:**
+- Voice messages - Transcribed via Whisper and sent to Droid
+- Inline buttons - Quick autonomy/model selection on mobile
+
+### Model Shortcuts
+```python
+MODEL_SHORTCUTS = {
+    "opus": "claude-sonnet-4-20250514",
+    "sonnet": "claude-sonnet-4-20250514", 
+    "haiku": "claude-haiku",
+    "gpt": "gpt-4.1",
+    "codex": "codex-1",
+    "gemini": "gemini-3-pro-preview",
+    "glm": "glm-4.6",
+}
+```
 
 ## Project Structure
 
 ```
-bot.py              - Main bot code
-start.sh            - Startup script with env loading
+bot.py              - Main bot code (~1800 lines)
+start.sh            - Startup with env vars and lock file
 watch.sh            - Auto-restart on file changes
-.env                - Environment config (DO NOT COMMIT)
-sessions.json       - Session persistence (DO NOT COMMIT)
-scripts/            - Helper scripts
-  update-readme.py  - Auto-update README commands
-  setup-hooks.sh    - Install git hooks
+.env                - Secrets (NEVER COMMIT)
+sessions.json       - Session persistence (NEVER COMMIT)
+AGENTS.md           - This file (AI guidelines)
+README.md           - Auto-updated by pre-commit hook
+scripts/
+  update-readme.py  - Generates README command tables
+  setup-hooks.sh    - Installs pre-commit hook
+.github/hooks/
+  pre-commit        - Auto-updates README on commit
 ```
 
-## Key Features to Maintain
+## Adding New Commands - Checklist
 
-1. **Project Shortcuts** (`/proj`) - Quick project switching with autonomy/model
-2. **Git Sync** - Auto pull/push functionality
-3. **Voice Messages** - Whisper transcription (requires ffmpeg)
-4. **Model Selection** - Support all Droid CLI models
-5. **Session Management** - Persistent sessions with settings
+1. [ ] Add async handler function in bot.py
+2. [ ] Register in `main()` with `CommandHandler("name", handler)`
+3. [ ] Add to `COMMAND_DOCS` in `scripts/update-readme.py`
+4. [ ] Update `help_command()` in bot.py
+5. [ ] Test syntax: `python3 -m py_compile bot.py`
+6. [ ] Test in Telegram
+7. [ ] Commit with descriptive message
+8. [ ] Push to trigger README update
 
-## Adding New Commands
+## Code Conventions
 
-1. Add the async handler function
-2. Register in `main()` with `CommandHandler`
-3. Update `scripts/update-readme.py` COMMAND_DOCS dict
-4. Update README.md manually for detailed docs
-5. Test in Telegram
-6. Commit and push
+- Section headers: `# ===` separators for major features
+- Logging: `logger.info()` for events, `logger.error()` for failures
+- Auth check: Always start handlers with `if not is_authorized(): return`
+- HTML mode: Use `parse_mode=ParseMode.HTML` for formatted messages
+- Async: All handlers must be `async def`
+
+## Environment Variables
+
+```bash
+# Required
+TELEGRAM_BOT_TOKEN=xxx
+ALLOWED_TELEGRAM_USER_IDS=123,456
+
+# Optional
+OPENAI_API_KEY=xxx              # For voice transcription
+DROID_PROJECT_SHORTCUTS='{"name":"~/path"}'
+DROID_AUTO_GIT_PULL=true
+DROID_AUTO_GIT_PUSH=false
+DROID_DEFAULT_AUTONOMY=high
+DROID_DEFAULT_MODEL=opus
+DROID_DEFAULT_SYNC=true
+```
+</coding_guidelines>
