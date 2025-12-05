@@ -63,6 +63,61 @@ PROJECT_SHORTCUTS = load_project_shortcuts()
 AUTO_GIT_PULL = os.environ.get("DROID_AUTO_GIT_PULL", "true").lower() == "true"
 AUTO_GIT_PUSH = os.environ.get("DROID_AUTO_GIT_PUSH", "false").lower() == "true"  # Off by default for safety
 
+# =============================================================================
+# NEW FEATURE: Model Shortcuts
+# =============================================================================
+MODEL_SHORTCUTS = {
+    "opus": "claude-opus-4-5-20251101",
+    "sonnet": "claude-sonnet-4-5-20250929",
+    "haiku": "claude-haiku-4-5-20251001",
+    "opus4.1": "claude-opus-4-1-20250805",
+    "gpt": "gpt-5.1",
+    "codex": "gpt-5.1-codex",
+    "gemini": "gemini-3-pro-preview",
+    "glm": "glm-4.6",
+}
+DEFAULT_MODEL = "opus"
+AUTONOMY_LEVELS = ["off", "low", "medium", "high", "unsafe"]
+
+def get_available_models():
+    """Fetch available models from droid CLI"""
+    try:
+        result = subprocess.run(
+            [DROID_PATH, "exec", "--help"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            # Parse models from help output
+            models = {}
+            in_models = False
+            for line in result.stdout.split('\n'):
+                if 'Available Models:' in line:
+                    in_models = True
+                    continue
+                if in_models:
+                    if line.strip() and not line.startswith(' '):
+                        break
+                    match = re.match(r'\s+(\S+)\s+(.+)', line)
+                    if match:
+                        model_id, name = match.groups()
+                        models[model_id] = name.strip()
+            return models if models else None
+    except:
+        pass
+    return None
+
+def resolve_model(shortcut):
+    """Resolve model shortcut to full model ID"""
+    if not shortcut:
+        return MODEL_SHORTCUTS.get(DEFAULT_MODEL)
+    shortcut = shortcut.lower()
+    if shortcut in MODEL_SHORTCUTS:
+        return MODEL_SHORTCUTS[shortcut]
+    # Check if it's already a full model ID
+    if "-" in shortcut or "." in shortcut:
+        return shortcut
+    return None
+
 # Validate required config
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable is required")
@@ -96,7 +151,8 @@ pending_permissions = {}
 session_history = []
 session_autonomy = {}
 active_processes = {}
-session_git_sync = {}  # NEW: Track git sync settings per session
+session_git_sync = {}  # Track git sync settings per session
+session_models = {}  # Track model per session
 
 BOT_CONTEXT = """[Telegram Bot Context: You're running inside a Telegram bot. The user can use /new <path> to change the working directory for their session (e.g., /new ~/projects/myapp). Don't suggest using cd to change directories - instead tell them to use /new <path>. They can also use /proj <shortcut> for quick project switching.]
 
@@ -220,7 +276,7 @@ def get_git_status(cwd):
 # =============================================================================
 
 def load_sessions():
-    global sessions, active_session_per_user, session_history, session_autonomy, session_git_sync
+    global sessions, active_session_per_user, session_history, session_autonomy, session_git_sync, session_models
     try:
         if os.path.exists(SESSIONS_FILE):
             with open(SESSIONS_FILE, 'r') as f:
@@ -230,6 +286,7 @@ def load_sessions():
                 session_history = data.get("session_history", [])
                 session_autonomy = data.get("session_autonomy", {})
                 session_git_sync = data.get("session_git_sync", {})
+                session_models = data.get("session_models", {})
                 logger.info(f"Loaded {len(sessions)} sessions")
     except Exception as e:
         logger.error(f"Failed to load sessions: {e}")
@@ -241,7 +298,8 @@ def save_sessions():
             "active_session_per_user": {str(k): v for k, v in active_session_per_user.items()},
             "session_history": session_history[-100:],
             "session_autonomy": session_autonomy,
-            "session_git_sync": session_git_sync
+            "session_git_sync": session_git_sync,
+            "session_models": session_models
         }
         with open(SESSIONS_FILE, 'w') as f:
             json.dump(data, f, indent=2)
@@ -373,29 +431,45 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =============================================================================
 
 async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Quick project switching with shortcuts"""
+    """Quick project switching with shortcuts - supports /proj <shortcut> [autonomy] [model]"""
     if not is_authorized(update.effective_user.id):
         return
     
     args = update.message.text.split()[1:] if len(update.message.text.split()) > 1 else []
     
     if not args:
-        # List available shortcuts
+        # List available shortcuts with usage info
+        model_list = ", ".join(MODEL_SHORTCUTS.keys())
         if not PROJECT_SHORTCUTS:
             await update.message.reply_text(
                 "No project shortcuts configured.\n\n"
                 "Add them to your .env file:\n"
-                "<code>DROID_PROJECT_SHORTCUTS='{\"chadix\": \"~/dev/chadix-app-website\"}'</code>",
+                "<code>DROID_PROJECT_SHORTCUTS='{\"myapp\": \"~/dev/myapp\"}'</code>",
                 parse_mode=ParseMode.HTML
             )
         else:
-            lines = ["<b>Available Project Shortcuts:</b>\n"]
+            lines = ["<b>📁 Project Shortcuts</b>\n"]
             for shortcut, path in PROJECT_SHORTCUTS.items():
                 lines.append(f"<code>/proj {shortcut}</code> → {path}")
+            lines.append(f"\n<b>Usage:</b> <code>/proj shortcut [auto] [model]</code>")
+            lines.append(f"<b>Autonomy:</b> off, low, medium, high, unsafe")
+            lines.append(f"<b>Models:</b> {model_list}")
+            lines.append(f"\n<b>Example:</b> <code>/proj chadix high sonnet</code>")
             await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
         return
     
+    # Parse arguments: /proj <shortcut> [autonomy] [model]
     shortcut = args[0].lower()
+    autonomy_level = "off"
+    model_shortcut = None
+    
+    for arg in args[1:]:
+        arg_lower = arg.lower()
+        if arg_lower in AUTONOMY_LEVELS:
+            autonomy_level = arg_lower
+        elif arg_lower in MODEL_SHORTCUTS or resolve_model(arg_lower):
+            model_shortcut = arg_lower
+    
     if shortcut not in PROJECT_SHORTCUTS:
         available = ", ".join(PROJECT_SHORTCUTS.keys()) if PROJECT_SHORTCUTS else "none"
         await update.message.reply_text(f"❌ Unknown shortcut: {shortcut}\n\nAvailable: {available}")
@@ -416,20 +490,40 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if AUTO_GIT_PULL and is_git_repo(resolved_cwd):
         success, pull_msg = git_pull(resolved_cwd)
         if success:
-            git_msg = f"\n🔄 Git: {pull_msg}"
+            git_msg = f"\n🔄 {pull_msg}"
         else:
-            git_msg = f"\n⚠️ Git pull failed: {pull_msg}"
+            git_msg = f"\n⚠️ Pull failed: {pull_msg}"
     
-    # Create new session
-    temp_session_ref = str(uuid.uuid4())[:8]
+    # Create session with ID immediately (so /auto works)
+    temp_session_id = f"tg-{str(uuid.uuid4())[:8]}"
     short_cwd = resolved_cwd.replace(os.path.expanduser("~"), "~")
     git_state, git_info = get_git_status(resolved_cwd)
     
-    header_text = f"📂 {short_cwd}\n🆔 Session: {temp_session_ref}\n✓ Git: {git_info}{git_msg}"
+    # Resolve model
+    model_id = resolve_model(model_shortcut) if model_shortcut else None
+    model_display = model_shortcut or "default"
+    
+    # Set autonomy and model for this session
+    session_autonomy[temp_session_id] = autonomy_level
+    if model_id:
+        session_models[temp_session_id] = model_id
+    
+    # Build status display
+    auto_emoji = {"off": "👁", "low": "🔒", "medium": "🔓", "high": "⚡", "unsafe": "⚠️"}
+    status_lines = [
+        f"📂 {short_cwd}",
+        f"🆔 {temp_session_id}",
+        f"🌿 {git_info}{git_msg}",
+        f"{auto_emoji.get(autonomy_level, '')} Auto: {autonomy_level}",
+    ]
+    if model_id:
+        status_lines.append(f"🤖 Model: {model_display}")
+    
+    header_text = "\n".join(status_lines)
     header_msg = await update.message.reply_text(header_text)
     
     session_data = {
-        "session_id": None,
+        "session_id": temp_session_id,
         "cwd": resolved_cwd,
         "header_msg_id": header_msg.message_id,
         "awaiting_first_message": True
@@ -437,13 +531,62 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sessions[header_msg.message_id] = session_data
     
     active_session_per_user[user_id] = {
-        "session_id": None,
+        "session_id": temp_session_id,
         "cwd": resolved_cwd,
         "last_msg_id": header_msg.message_id
     }
     save_sessions()
     
-    await update.message.reply_text(f"✓ Switched to <b>{shortcut}</b>\n\nSend a message to start working.", parse_mode=ParseMode.HTML)
+    # Quick action buttons for phone users
+    keyboard = [
+        [
+            InlineKeyboardButton("⚡ High", callback_data=f"setauto_{temp_session_id}_high"),
+            InlineKeyboardButton("🔓 Med", callback_data=f"setauto_{temp_session_id}_medium"),
+            InlineKeyboardButton("👁 Off", callback_data=f"setauto_{temp_session_id}_off"),
+        ],
+        [
+            InlineKeyboardButton("🎭 Opus", callback_data=f"setmodel_{temp_session_id}_opus"),
+            InlineKeyboardButton("🎵 Sonnet", callback_data=f"setmodel_{temp_session_id}_sonnet"),
+            InlineKeyboardButton("💨 Haiku", callback_data=f"setmodel_{temp_session_id}_haiku"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"✓ Ready! Send your task or tap to adjust:",
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML
+    )
+
+
+async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline button callbacks for settings"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    user_id = update.effective_user.id
+    
+    if data.startswith("setauto_"):
+        parts = data.split("_")
+        if len(parts) >= 3:
+            session_id = parts[1]
+            level = parts[2]
+            session_autonomy[session_id] = level
+            save_sessions()
+            emoji = {"off": "👁", "low": "🔒", "medium": "🔓", "high": "⚡", "unsafe": "⚠️"}
+            await query.edit_message_text(f"{emoji.get(level, '')} Autonomy: <b>{level}</b>\n\nSend your task!", parse_mode=ParseMode.HTML)
+    
+    elif data.startswith("setmodel_"):
+        parts = data.split("_")
+        if len(parts) >= 3:
+            session_id = parts[1]
+            model_short = parts[2]
+            model_id = resolve_model(model_short)
+            if model_id:
+                session_models[session_id] = model_id
+                save_sessions()
+                await query.edit_message_text(f"🤖 Model: <b>{model_short}</b>\n\nSend your task!", parse_mode=ParseMode.HTML)
 
 # =============================================================================
 # NEW COMMAND: Git Sync Controls
@@ -1016,13 +1159,15 @@ def extract_session_id(line):
         pass
     return None
 
-async def handle_message_streaming(user_message, session_id, status_msg, cwd=None, autonomy_level="off", user_id=None):
+async def handle_message_streaming(user_message, session_id, status_msg, cwd=None, autonomy_level="off", user_id=None, model=None):
     env = os.environ.copy()
     working_dir = cwd or DEFAULT_CWD
 
     cmd = [DROID_PATH, "exec"]
     if autonomy_level != "off":
         cmd.extend(["--auto", autonomy_level])
+    if model:
+        cmd.extend(["-m", model])
     cmd.extend(["--output-format", "stream-json"])
     if session_id:
         cmd.extend(["-s", session_id])
@@ -1102,13 +1247,15 @@ async def handle_message_streaming(user_message, session_id, status_msg, cwd=Non
 
     return final_response.strip(), new_session_id
 
-async def handle_message_simple(user_message, session_id, cwd=None, autonomy_level="off"):
+async def handle_message_simple(user_message, session_id, cwd=None, autonomy_level="off", model=None):
     env = os.environ.copy()
     working_dir = cwd or DEFAULT_CWD
 
     cmd = [DROID_PATH, "exec"]
     if autonomy_level != "off":
         cmd.extend(["--auto", autonomy_level])
+    if model:
+        cmd.extend(["-m", model])
     if session_id:
         cmd.extend(["-s", session_id])
 
@@ -1166,6 +1313,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     short_cwd = session_cwd.replace(os.path.expanduser("~"), "~")
     autonomy_level = session_autonomy.get(session_id, "off") if session_id else "off"
+    model = session_models.get(session_id) if session_id else None
 
     status_text = f"Working in {short_cwd}"
     if git_pull_msg:
@@ -1174,9 +1322,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if streaming_mode:
-            response, new_session_id = await handle_message_streaming(user_message, session_id, status_msg, session_cwd, autonomy_level, user_id=user_id)
+            response, new_session_id = await handle_message_streaming(user_message, session_id, status_msg, session_cwd, autonomy_level, user_id=user_id, model=model)
         else:
-            response, new_session_id = await handle_message_simple(user_message, session_id, session_cwd, autonomy_level)
+            response, new_session_id = await handle_message_simple(user_message, session_id, session_cwd, autonomy_level, model=model)
 
         response = response or "No response from Droid"
 
@@ -1247,6 +1395,9 @@ def main():
     app.add_handler(CommandHandler("sync", sync_command))
     app.add_handler(CommandHandler("pull", pull_command))
     app.add_handler(CommandHandler("push", push_command))
+    
+    # Callback handlers for inline buttons
+    app.add_handler(CallbackQueryHandler(handle_settings_callback, pattern="^(setauto_|setmodel_)"))
     
     # Message handlers
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
