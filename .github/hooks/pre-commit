@@ -1,0 +1,17 @@
+#!/bin/bash
+# Pre-commit hook to auto-update README with commands from bot.py
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Check if bot.py is being committed
+if git diff --cached --name-only | grep -q "bot.py"; then
+    echo "bot.py changed - updating README commands..."
+    python3 "$PROJECT_DIR/scripts/update-readme.py"
+    
+    # Stage the updated README if it changed
+    if git diff --name-only | grep -q "README.md"; then
+        git add README.md
+        echo "README.md auto-updated and staged"
+    fi
+fi

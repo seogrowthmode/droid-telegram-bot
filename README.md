@@ -1,15 +1,24 @@
-# Droid Telegram Bot
+# Droid Telegram Bot - Enhanced Edition
 
 A Telegram bot that interfaces with [Factory's Droid CLI](https://factory.ai), allowing you to interact with Droid via Telegram messages.
 
+> **Fork:** [seogrowthmode/droid-telegram-bot](https://github.com/seogrowthmode/droid-telegram-bot) | **Original:** [factory-ben/droid-telegram-bot](https://github.com/factory-ben/droid-telegram-bot)
+
 ## Features
 
+### Core Features
 - 💬 **Chat with Droid** - Send messages and get AI-powered responses
 - ⚡ **Live Streaming** - Watch tool calls in real-time as Droid works
 - 📂 **Session Management** - Persistent sessions with working directory context
 - 🔐 **Access Control** - Restrict bot access to specific Telegram users
 - 🎚️ **Autonomy Levels** - Control how much freedom Droid has (off/low/medium/high/unsafe)
 - 🔧 **Git Integration** - Quick `/git` commands for common operations
+
+### Enhanced Features (This Fork)
+- 🔄 **Auto Git Sync** - Automatically pull before tasks and push after changes
+- 📁 **Project Shortcuts** - Quick project switching with `/proj` command
+- 🎤 **Voice Messages** - Send voice notes, get them transcribed and processed
+- 🔃 **Auto-Restart** - Development mode with automatic reload on file changes
 
 ## Prerequisites
 
@@ -60,11 +69,22 @@ Required environment variables:
 ### 5. Run
 
 ```bash
-# Direct
-python bot.py
+# Using start script (recommended - handles env vars properly)
+./start.sh
 
-# Or with environment variables inline
-TELEGRAM_BOT_TOKEN=your-token TELEGRAM_ALLOWED_USER_IDS=123456 python bot.py
+# Development mode with auto-restart on file changes
+./watch.sh
+
+# Or direct (requires env vars to be exported)
+python bot.py
+```
+
+### 6. Optional: Voice Message Support
+
+To enable voice message transcription, install OpenAI Whisper:
+
+```bash
+pip install openai-whisper
 ```
 
 ## Environment Variables
@@ -78,21 +98,34 @@ TELEGRAM_BOT_TOKEN=your-token TELEGRAM_ALLOWED_USER_IDS=123456 python bot.py
 | `DROID_DEFAULT_CWD` | ❌ | `~` | Default working directory |
 | `DROID_LOG_FILE` | ❌ | `/var/log/droid-telegram/bot.log` | Log file path |
 | `DROID_SESSIONS_FILE` | ❌ | `/var/lib/droid-telegram/sessions.json` | Sessions file |
+| `DROID_PROJECT_SHORTCUTS` | ❌ | `{}` | JSON object of project shortcuts (e.g., `'{"myapp":"~/dev/myapp"}'`) |
+| `DROID_AUTO_GIT_PULL` | ❌ | `true` | Auto git pull before tasks |
+| `DROID_AUTO_GIT_PUSH` | ❌ | `false` | Auto commit & push after tasks |
 
 ## Commands
 
+### Core Commands
 | Command | Description |
 |---------|-------------|
 | `/start` | Welcome message and quick help |
 | `/help` | Detailed help |
-| `/new [path]` | Start new session (optionally in directory) |
-| `/session` | List recent sessions |
-| `/session <id>` | Switch to a session |
-| `/auto [level]` | Set autonomy level (off/low/medium/high/unsafe) |
+| `/new` | Start new session (optionally in directory) |
 | `/cwd` | Show current working directory |
 | `/stream` | Toggle live tool updates on/off |
+| `/auto` | Set autonomy level (off/low/medium/high/unsafe) |
+| `/stop` | Stop currently running task |
 | `/status` | Bot and Droid status |
-| `/git [args]` | Run git commands in current directory |
+| `/session` | List/switch sessions |
+| `/git` | Run git commands in current directory |
+
+### Enhanced Commands (This Fork)
+| Command | Description |
+|---------|-------------|
+| `/proj` | List/switch project shortcuts |
+| `/sync` | Toggle auto git sync options |
+| `/pull` | Manually pull latest changes |
+| `/push` | Commit all changes and push |
+
 
 ## Autonomy Levels
 
@@ -108,11 +141,31 @@ Control how much freedom Droid has with the `/auto` command:
 
 ## Usage Tips
 
+### General
 - **Reply to continue** - Reply to any bot message to continue that session
 - **Working directories** - Use `/new ~/projects/myapp` to set context
 - **Live updates** - Watch Droid's progress with streaming enabled (default)
 - **Autonomy control** - Use `/auto high` to enable tool execution
-- **Permission prompts** - Bot shows Once/Always/Deny buttons for elevated permissions
+
+### Project Shortcuts (Enhanced)
+Set up shortcuts in your `.env` or `start.sh`:
+```bash
+DROID_PROJECT_SHORTCUTS='{"myapp":"~/dev/myapp","website":"~/dev/website"}'
+```
+Then quickly switch with `/proj myapp` instead of typing full paths.
+
+### Git Sync (Enhanced)
+- Auto-pull is enabled by default - always work on latest code
+- Enable auto-push with `/sync push` or set `DROID_AUTO_GIT_PUSH=true`
+- Manual control with `/pull` and `/push "commit message"`
+
+### Voice Messages (Enhanced)
+Just send a voice note! The bot will:
+1. Transcribe it using Whisper (if installed)
+2. Send the transcription to Droid
+3. Return the response
+
+Great for quick ideas while away from keyboard.
 
 ## Production Deployment
 
