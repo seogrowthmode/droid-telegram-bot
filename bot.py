@@ -87,6 +87,43 @@ DEFAULT_MODEL_SHORTCUT = os.environ.get("DROID_DEFAULT_MODEL", "opus")
 DEFAULT_SYNC = os.environ.get("DROID_DEFAULT_SYNC", "true").lower() == "true"
 
 # =============================================================================
+# BOT FEATURES - Auto-synced to README.md via pre-commit hook
+# Update this dict when adding features!
+# =============================================================================
+BOT_FEATURES = {
+    "auto_git_sync": {
+        "emoji": "🔄",
+        "name": "Auto Git Sync",
+        "desc": "Automatically pull before tasks and push after changes"
+    },
+    "project_shortcuts": {
+        "emoji": "📁",
+        "name": "Project Shortcuts",
+        "desc": "Quick project switching with `/proj` command"
+    },
+    "smart_defaults": {
+        "emoji": "⚡",
+        "name": "Smart Defaults",
+        "desc": "High autonomy, Opus model, sync on by default"
+    },
+    "task_queue": {
+        "emoji": "📋",
+        "name": "Task Queue",
+        "desc": "Queue multiple tasks with `/add`, process with `/run`"
+    },
+    "smart_voice": {
+        "emoji": "🎤",
+        "name": "Smart Voice",
+        "desc": "Voice commands with intent detection (add task, switch project, run queue)"
+    },
+    "auto_restart": {
+        "emoji": "🔃",
+        "name": "Auto-Restart",
+        "desc": "Development mode with automatic reload on file changes"
+    },
+}
+
+# =============================================================================
 # SMART VOICE/MESSAGE ROUTING - Trigger phrases (modify these!)
 # =============================================================================
 VOICE_TRIGGERS = {
@@ -152,6 +189,42 @@ def detect_voice_intent(text: str) -> tuple:
                 return (intent, project, remaining.strip())
     
     return (None, None, text)
+
+
+def fuzzy_match_project(text: str) -> str:
+    """
+    Try to fuzzy match project names in text.
+    Handles common Whisper mishearings like 'chatics' -> 'chadix'
+    """
+    if not PROJECT_SHORTCUTS:
+        return text
+    
+    text_lower = text.lower()
+    
+    for project in PROJECT_SHORTCUTS.keys():
+        # Already exact match
+        if project in text_lower:
+            continue
+        
+        # Check for similar sounding words (simple edit distance)
+        words = text_lower.split()
+        for i, word in enumerate(words):
+            # Skip short words
+            if len(word) < 4:
+                continue
+            
+            # Check if word is similar to project name
+            # Simple check: same first letter and similar length
+            if word[0] == project[0] and abs(len(word) - len(project)) <= 2:
+                # Count matching characters
+                matches = sum(1 for a, b in zip(word, project) if a == b)
+                if matches >= len(project) * 0.6:  # 60% match
+                    # Replace the word with correct project name
+                    words[i] = project
+                    return " ".join(words)
+    
+    return text
+
 
 def get_available_models():
     """Fetch available models from droid CLI"""
@@ -1319,10 +1392,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Transcribe using whisper Python module
         transcribed_text = None
+        
+        # Build initial_prompt with project names and trigger words for better accuracy
+        project_names = ", ".join(PROJECT_SHORTCUTS.keys()) if PROJECT_SHORTCUTS else ""
+        initial_prompt = f"Project names: {project_names}. Commands: add task, queue, switch to, run queue, clear queue, show queue."
+        
         try:
             import whisper
-            model = whisper.load_model("base")
-            result = model.transcribe(tmp_path)
+            model = whisper.load_model("medium")  # medium for better accuracy
+            result = model.transcribe(tmp_path, initial_prompt=initial_prompt)
             transcribed_text = result.get("text", "").strip()
         except ImportError:
             # Whisper not installed, try CLI as fallback
@@ -1335,7 +1413,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for whisper_cmd in whisper_paths:
                 try:
                     result = subprocess.run(
-                        [whisper_cmd, tmp_path, "--model", "base", "--output_format", "txt", "--output_dir", "/tmp"],
+                        [whisper_cmd, tmp_path, "--model", "medium", "--output_format", "txt", "--output_dir", "/tmp"],
                         capture_output=True, text=True, timeout=120
                     )
                     txt_file = tmp_path.replace(".ogg", ".txt")
@@ -1360,6 +1438,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML
             )
             return
+        
+        # Apply fuzzy matching to fix common mishearings (e.g., 'chatics' -> 'chadix')
+        transcribed_text = fuzzy_match_project(transcribed_text)
         
         await status_msg.edit_text(f"🎤 \"{transcribed_text}\"\n\nProcessing...")
         

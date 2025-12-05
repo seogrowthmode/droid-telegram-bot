@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Auto-update README.md with commands extracted from bot.py
+Auto-update README.md with commands AND features extracted from bot.py
 Run this before committing to keep docs in sync.
 """
 import re
 import os
+import ast
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
@@ -49,6 +50,54 @@ def extract_commands_from_bot():
     commands = re.findall(pattern, content)
     return commands
 
+
+def extract_features_from_bot():
+    """Extract BOT_FEATURES dict from bot.py"""
+    with open(BOT_FILE, 'r') as f:
+        content = f.read()
+    
+    # Find BOT_FEATURES block - match balanced braces
+    start = content.find('BOT_FEATURES = {')
+    if start == -1:
+        print("Warning: BOT_FEATURES not found in bot.py")
+        return {}
+    
+    # Find matching closing brace
+    brace_count = 0
+    end = start + len('BOT_FEATURES = ')
+    for i, char in enumerate(content[end:], end):
+        if char == '{':
+            brace_count += 1
+        elif char == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                end = i + 1
+                break
+    
+    try:
+        features_str = content[start + len('BOT_FEATURES = '):end]
+        features = ast.literal_eval(features_str)
+        return features
+    except Exception as e:
+        print(f"Warning: Could not parse BOT_FEATURES: {e}")
+        return {}
+
+
+def generate_features_list():
+    """Generate markdown list of features"""
+    features = extract_features_from_bot()
+    if not features:
+        return None
+    
+    lines = []
+    for key, feat in features.items():
+        emoji = feat.get('emoji', '•')
+        name = feat.get('name', key)
+        desc = feat.get('desc', '')
+        lines.append(f"- {emoji} **{name}** - {desc}")
+    
+    return "\n".join(lines)
+
 def generate_commands_table():
     """Generate markdown tables for commands"""
     commands = extract_commands_from_bot()
@@ -73,31 +122,52 @@ def generate_commands_table():
     return f"{core_table}\n\n{enhanced_table}"
 
 def update_readme():
-    """Update the Commands section in README"""
+    """Update Commands and Features sections in README"""
     with open(README_FILE, 'r') as f:
         readme = f.read()
     
-    # Find and replace Commands section
-    pattern = r'(## Commands\n\n).*?((?=\n## )|$)'
+    updated = False
+    
+    # Update Commands section
+    commands_pattern = r'(## Commands\n\n).*?((?=\n## )|$)'
     new_commands = generate_commands_table()
     
-    # Check if section exists
-    if '## Commands' not in readme:
+    if '## Commands' in readme:
+        new_readme = re.sub(
+            commands_pattern,
+            f'\\1{new_commands}\n\n',
+            readme,
+            flags=re.DOTALL
+        )
+        if new_readme != readme:
+            readme = new_readme
+            updated = True
+            print("README.md: Commands section updated")
+    else:
         print("Warning: ## Commands section not found in README")
-        return False
     
-    # Replace
-    new_readme = re.sub(
-        pattern,
-        f'\\1{new_commands}\n\n',
-        readme,
-        flags=re.DOTALL
-    )
+    # Update Enhanced Features section
+    features_list = generate_features_list()
+    if features_list:
+        features_pattern = r'(### Enhanced Features \(This Fork\)\n).*?((?=\n## |\n### [^E])|$)'
+        if '### Enhanced Features' in readme:
+            new_readme = re.sub(
+                features_pattern,
+                f'\\1{features_list}\n\n',
+                readme,
+                flags=re.DOTALL
+            )
+            if new_readme != readme:
+                readme = new_readme
+                updated = True
+                print("README.md: Enhanced Features section updated")
+        else:
+            print("Warning: ### Enhanced Features section not found in README")
     
-    if new_readme != readme:
+    if updated:
         with open(README_FILE, 'w') as f:
-            f.write(new_readme)
-        print("README.md updated with latest commands")
+            f.write(readme)
+        print("README.md saved")
         return True
     else:
         print("README.md already up to date")

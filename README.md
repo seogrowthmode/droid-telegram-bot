@@ -19,11 +19,9 @@ A Telegram bot that interfaces with [Factory's Droid CLI](https://factory.ai), a
 - 📁 **Project Shortcuts** - Quick project switching with `/proj` command
 - ⚡ **Smart Defaults** - High autonomy, Opus model, sync on by default
 - 📋 **Task Queue** - Queue multiple tasks with `/add`, process with `/run`
-- 🎤 **Smart Voice** - Voice commands with intent detection:
-  - "Add task on chadix to build X" → queues task
-  - "Switch to chadix" → switches project
-  - "Run the queue" → starts processing
+- 🎤 **Smart Voice** - Voice commands with intent detection (add task, switch project, run queue)
 - 🔃 **Auto-Restart** - Development mode with automatic reload on file changes
+
 
 ## Prerequisites
 

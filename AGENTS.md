@@ -3,11 +3,16 @@
 
 ## MANDATORY: Update Docs on Every Change
 
-When adding/modifying features, you MUST update ALL THREE:
+When adding/modifying features, you MUST:
 
-1. **`scripts/update-readme.py`** - Add command to COMMAND_DOCS dict
-2. **`bot.py` help_command()** - Update the /help text (around line 411)
-3. **Commit and push** - Pre-commit hook auto-updates README.md
+1. **Update `BOT_FEATURES` dict in bot.py** (~line 93) - This auto-updates README!
+2. **Update `COMMAND_DOCS` in scripts/update-readme.py** - For new commands
+3. **Update `help_command()` in bot.py** - For /help text
+4. **Commit and push** - Pre-commit hook auto-syncs README.md
+
+The pre-commit hook now auto-updates BOTH:
+- Commands table (from COMMAND_DOCS)
+- Enhanced Features section (from BOT_FEATURES)
 
 ### Pre-commit Hook
 The hook at `.github/hooks/pre-commit` automatically:
@@ -108,16 +113,16 @@ scripts/
   pre-commit        - Auto-updates README on commit
 ```
 
-## Adding New Commands - Checklist
+## Adding New Features - Checklist
 
-1. [ ] Add async handler function in bot.py
+1. [ ] Add handler function in bot.py
 2. [ ] Register in `main()` with `CommandHandler("name", handler)`
-3. [ ] Add to `COMMAND_DOCS` in `scripts/update-readme.py`
-4. [ ] Update `help_command()` in bot.py
-5. [ ] Test syntax: `python3 -m py_compile bot.py`
-6. [ ] Test in Telegram
-7. [ ] Commit with descriptive message
-8. [ ] Push to trigger README update
+3. [ ] **Add to `BOT_FEATURES` dict** in bot.py (~line 93) ← AUTO-UPDATES README!
+4. [ ] Add to `COMMAND_DOCS` in `scripts/update-readme.py`
+5. [ ] Update `help_command()` in bot.py
+6. [ ] Test syntax: `python3 -m py_compile bot.py`
+7. [ ] Test in Telegram
+8. [ ] Commit and push → README auto-updates!
 
 ## Code Conventions
 
