@@ -719,24 +719,37 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await file.download_to_drive(tmp.name)
             tmp_path = tmp.name
         
-        # Transcribe using whisper (if available) or send to Droid for transcription
-        # For now, we'll use a simple approach - ask Droid to describe what to do
-        # In production, you'd integrate with Whisper API or similar
-        
-        # Try using local whisper if installed
+        # Transcribe using whisper Python module
         transcribed_text = None
         try:
-            result = subprocess.run(
-                ["whisper", tmp_path, "--model", "base", "--output_format", "txt", "--output_dir", "/tmp"],
-                capture_output=True, text=True, timeout=60
-            )
-            txt_file = tmp_path.replace(".ogg", ".txt")
-            if os.path.exists(txt_file):
-                with open(txt_file, 'r') as f:
-                    transcribed_text = f.read().strip()
-                os.remove(txt_file)
-        except:
-            pass
+            import whisper
+            model = whisper.load_model("base")
+            result = model.transcribe(tmp_path)
+            transcribed_text = result.get("text", "").strip()
+        except ImportError:
+            # Whisper not installed, try CLI as fallback
+            whisper_paths = [
+                "whisper",
+                "/Library/Frameworks/Python.framework/Versions/3.10/bin/whisper",
+                "/usr/local/bin/whisper",
+                os.path.expanduser("~/.local/bin/whisper"),
+            ]
+            for whisper_cmd in whisper_paths:
+                try:
+                    result = subprocess.run(
+                        [whisper_cmd, tmp_path, "--model", "base", "--output_format", "txt", "--output_dir", "/tmp"],
+                        capture_output=True, text=True, timeout=120
+                    )
+                    txt_file = tmp_path.replace(".ogg", ".txt")
+                    if os.path.exists(txt_file):
+                        with open(txt_file, 'r') as f:
+                            transcribed_text = f.read().strip()
+                        os.remove(txt_file)
+                        break
+                except:
+                    continue
+        except Exception as e:
+            logger.error(f"Whisper transcription error: {e}")
         
         # Clean up temp file
         os.remove(tmp_path)
