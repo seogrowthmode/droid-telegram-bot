@@ -1840,19 +1840,33 @@ async def session_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(f"Session not found: {target}")
     else:
-        if not session_history:
+        # Build list of sessions, ensuring active session is included
+        all_sessions = list(session_history)
+        
+        # Add active session if not in history
+        if user_id in active_session_per_user:
+            active = active_session_per_user[user_id]
+            active_sid = active.get("session_id")
+            if active_sid and not any(s.get("session_id") == active_sid for s in all_sessions):
+                all_sessions.append({
+                    "session_id": active_sid,
+                    "cwd": active.get("cwd", ""),
+                    "first_message": "(active session)"
+                })
+        
+        if not all_sessions:
             await update.message.reply_text("No sessions yet. Use /new or /proj to start one.")
             return
 
         lines = ["<b>Recent Sessions</b>\n"]
-        for entry in reversed(session_history[-10:]):
-            sid = entry["session_id"][:8]
-            cwd = entry["cwd"].replace(os.path.expanduser("~"), "~")
+        for entry in reversed(all_sessions[-10:]):
+            sid = entry["session_id"][:8] if entry.get("session_id") else "unknown"
+            cwd = entry.get("cwd", "").replace(os.path.expanduser("~"), "~")
             msg = entry.get("first_message", "")[:30] or "N/A"
 
             current = ""
             if user_id in active_session_per_user:
-                if active_session_per_user[user_id].get("session_id") == entry["session_id"]:
+                if active_session_per_user[user_id].get("session_id") == entry.get("session_id"):
                     current = " ✓"
 
             lines.append(f"<code>{sid}</code> {cwd}{current}\n  <i>{msg}</i>\n")
