@@ -27,6 +27,7 @@ A Telegram bot that interfaces with [Factory's Droid CLI](https://factory.ai), a
 - [Droid CLI](https://docs.factory.ai) installed
 - Telegram bot token (from [@BotFather](https://t.me/botfather))
 - Your Telegram user ID (from [@userinfobot](https://t.me/userinfobot))
+- ffmpeg (optional, for voice messages)
 
 ## Quick Start
 
@@ -81,11 +82,19 @@ python bot.py
 
 ### 6. Optional: Voice Message Support
 
-To enable voice message transcription, install OpenAI Whisper:
+To enable voice message transcription, install ffmpeg and OpenAI Whisper:
 
 ```bash
+# macOS
+brew install ffmpeg
+pip install openai-whisper
+
+# Ubuntu/Debian
+sudo apt install ffmpeg
 pip install openai-whisper
 ```
+
+Note: First voice message may be slow as Whisper downloads the model (~140MB).
 
 ## Environment Variables
 
