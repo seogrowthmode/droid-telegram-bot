@@ -57,8 +57,26 @@ DEFAULT_SYNC = True            # From DROID_DEFAULT_SYNC env
 - `/git [cmd]` - Run git commands
 
 **Special Features:**
-- Voice messages - Transcribed via Whisper and sent to Droid
+- Smart Voice Routing - Detects intent from voice messages
 - Inline buttons - Quick autonomy/model selection on mobile
+
+### Smart Voice Triggers (modify in bot.py ~line 92)
+```python
+VOICE_TRIGGERS = {
+    "add_task": ["add a task", "add task", "queue up", "queue task", ...],
+    "switch_project": ["switch to", "go to", "open project", ...],
+    "show_queue": ["show queue", "what's in queue", "list tasks", ...],
+    "run_queue": ["run queue", "start queue", "process tasks", ...],
+    "pause_queue": ["pause queue", "stop queue", ...],
+    "clear_queue": ["clear queue", "empty queue", ...],
+}
+```
+
+**Example voice commands:**
+- "Add a task on chadix to build the homepage" → `/add chadix build the homepage`
+- "Switch to chadix" → `/proj chadix`
+- "What's in my queue" → `/queue`
+- "Run the queue" → `/run`
 
 ### Model Shortcuts
 ```python
