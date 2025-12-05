@@ -2,6 +2,11 @@
 # Auto-restart bot when bot.py, .env, or start.sh changes
 cd "$(dirname "$0")"
 
+# Kill ALL existing bot instances immediately on startup
+echo "Killing any existing bot instances..."
+pkill -9 -f "python.*bot.py" 2>/dev/null
+sleep 1
+
 BOT_PID=""
 WATCH_FILES="bot.py .env start.sh"
 
