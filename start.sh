@@ -1,6 +1,10 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
+# Kill any existing bot instances to avoid Telegram conflicts
+pkill -9 -f "python.*bot.py" 2>/dev/null
+sleep 1
+
 # Load all env vars except DROID_PROJECT_SHORTCUTS (has JSON that needs special handling)
 export TELEGRAM_BOT_TOKEN=$(grep '^TELEGRAM_BOT_TOKEN=' .env | cut -d'=' -f2-)
 export TELEGRAM_ALLOWED_USER_IDS=$(grep '^TELEGRAM_ALLOWED_USER_IDS=' .env | cut -d'=' -f2-)

@@ -130,10 +130,22 @@ Note: First voice message may be slow as Whisper downloads the model (~140MB).
 ### Enhanced Commands (This Fork)
 | Command | Description |
 |---------|-------------|
-| `/proj` | List/switch project shortcuts |
+| `/proj` | List project shortcuts and usage |
+| `/proj <shortcut>` | Switch to project |
+| `/proj <shortcut> <auto> [model]` | Switch with autonomy & model (e.g., `/proj chadix high sonnet`) |
 | `/sync` | Toggle auto git sync options |
 | `/pull` | Manually pull latest changes |
-| `/push` | Commit all changes and push |
+| `/push [msg]` | Commit all changes and push |
+
+### Model Shortcuts
+| Shortcut | Model |
+|----------|-------|
+| `opus` | Claude Opus 4.5 (default) |
+| `sonnet` | Claude Sonnet 4.5 |
+| `haiku` | Claude Haiku 4.5 |
+| `gpt` | GPT-5.1 |
+| `codex` | GPT-5.1-Codex |
+| `gemini` | Gemini 3 Pro |
 
 
 ## Autonomy Levels
@@ -161,7 +173,12 @@ Set up shortcuts in your `.env` or `start.sh`:
 ```bash
 DROID_PROJECT_SHORTCUTS='{"myapp":"~/dev/myapp","website":"~/dev/website"}'
 ```
-Then quickly switch with `/proj myapp` instead of typing full paths.
+
+Then use the combined command for quick setup:
+```
+/proj myapp high sonnet
+```
+This switches to project, sets autonomy to high, and uses Sonnet model - all in one command. Perfect for mobile!
 
 ### Git Sync (Enhanced)
 - Auto-pull is enabled by default - always work on latest code
