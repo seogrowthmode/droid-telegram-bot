@@ -763,15 +763,56 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        await status_msg.edit_text(f"🎤 Transcribed: \"{transcribed_text}\"\n\nProcessing...")
+        await status_msg.edit_text(f"🎤 \"{transcribed_text}\"\n\nProcessing...")
         
-        # Now process as a regular message
-        update.message.text = transcribed_text
-        await handle_message(update, context)
+        # Process transcribed text directly (can't modify Message object)
+        user_id = update.effective_user.id
+        
+        # Get active session
+        session_id = None
+        session_cwd = DEFAULT_CWD
+        if user_id in active_session_per_user:
+            active = active_session_per_user[user_id]
+            session_id = active.get("session_id")
+            session_cwd = active.get("cwd") or DEFAULT_CWD
+        
+        autonomy_level = session_autonomy.get(session_id, "off") if session_id else "off"
+        model = session_models.get(session_id) if session_id else None
+        
+        # Call Droid
+        if streaming_mode:
+            response, new_session_id = await handle_message_streaming(
+                transcribed_text, session_id, status_msg, session_cwd, autonomy_level, user_id=user_id, model=model
+            )
+        else:
+            response, new_session_id = await handle_message_simple(
+                transcribed_text, session_id, session_cwd, autonomy_level, model=model
+            )
+        
+        response = response or "No response from Droid"
+        if len(response) > 4000:
+            response = response[:4000] + "\n\n[Response truncated]"
+        
+        await status_msg.delete()
+        reply_msg = await send_formatted_message(update.message, response)
+        
+        # Update session tracking
+        actual_session_id = new_session_id or session_id
+        if actual_session_id:
+            sessions[reply_msg.message_id] = {
+                "session_id": actual_session_id,
+                "cwd": session_cwd
+            }
+            active_session_per_user[user_id] = {
+                "session_id": actual_session_id,
+                "cwd": session_cwd,
+                "last_msg_id": reply_msg.message_id
+            }
+            save_sessions()
         
     except Exception as e:
         logger.error(f"Voice message error: {e}")
-        await status_msg.edit_text(f"❌ Error processing voice message: {str(e)}")
+        await status_msg.edit_text(f"❌ Error: {str(e)}")
 
 # =============================================================================
 # ORIGINAL COMMANDS (with git sync integration)
