@@ -86,6 +86,73 @@ DEFAULT_AUTONOMY = os.environ.get("DROID_DEFAULT_AUTONOMY", "high")
 DEFAULT_MODEL_SHORTCUT = os.environ.get("DROID_DEFAULT_MODEL", "opus")
 DEFAULT_SYNC = os.environ.get("DROID_DEFAULT_SYNC", "true").lower() == "true"
 
+# =============================================================================
+# SMART VOICE/MESSAGE ROUTING - Trigger phrases (modify these!)
+# =============================================================================
+VOICE_TRIGGERS = {
+    "add_task": [
+        "add a task", "add task", "queue up", "queue task",
+        "add to queue", "put in queue", "schedule task", "schedule a task",
+        "add to the queue", "put on queue", "queue a task"
+    ],
+    "switch_project": [
+        "switch to", "go to", "open project", "work on project",
+        "let's work on", "change to", "switch project to",
+        "open up", "jump to", "move to"
+    ],
+    "show_queue": [
+        "show queue", "what's in queue", "list queue", "view queue",
+        "show tasks", "pending tasks", "what's queued", "show my queue",
+        "what's in the queue", "list tasks", "my queue"
+    ],
+    "run_queue": [
+        "run queue", "start queue", "process queue", "execute queue",
+        "run tasks", "start tasks", "run the queue", "start the queue",
+        "process tasks", "go through queue"
+    ],
+    "pause_queue": [
+        "pause queue", "stop queue", "pause tasks", "hold queue"
+    ],
+    "clear_queue": [
+        "clear queue", "empty queue", "delete tasks", "clear tasks",
+        "remove all tasks", "clear the queue", "empty the queue"
+    ]
+}
+
+def detect_voice_intent(text: str) -> tuple:
+    """
+    Detect intent from voice/text message.
+    Returns: (intent, project, remaining_text) or (None, None, text)
+    """
+    text_lower = text.lower().strip()
+    
+    # Check each intent
+    for intent, triggers in VOICE_TRIGGERS.items():
+        for trigger in triggers:
+            if trigger in text_lower:
+                # Found a trigger - extract the rest
+                remaining = text_lower.replace(trigger, "").strip()
+                
+                # Try to find project name
+                project = None
+                for proj_name in PROJECT_SHORTCUTS.keys():
+                    if proj_name in remaining:
+                        project = proj_name
+                        # Remove project name from remaining
+                        remaining = remaining.replace(proj_name, "").strip()
+                        # Clean up common connector words
+                        for word in ["on", "to", "for", "in", "the", "project"]:
+                            remaining = remaining.replace(f" {word} ", " ").strip()
+                            if remaining.startswith(f"{word} "):
+                                remaining = remaining[len(word)+1:].strip()
+                            if remaining.endswith(f" {word}"):
+                                remaining = remaining[:-(len(word)+1)].strip()
+                        break
+                
+                return (intent, project, remaining.strip())
+    
+    return (None, None, text)
+
 def get_available_models():
     """Fetch available models from droid CLI"""
     try:
@@ -483,10 +550,16 @@ async def features_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>/clear</code> - Clear all tasks\n\n"
         
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>🎤 VOICE MESSAGES</b>\n"
+        "<b>🎤 SMART VOICE</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "Send voice → Whisper transcribes → Droid executes\n"
-        "Perfect for quick mobile coding!\n\n"
+        "Voice is transcribed and routed smartly!\n\n"
+        "<b>Say:</b>\n"
+        "• \"Add task on chadix to build X\" → queues task\n"
+        "• \"Switch to chadix\" → switches project\n"
+        "• \"What's in my queue\" → shows queue\n"
+        "• \"Run the queue\" → starts processing\n"
+        "• \"Clear queue\" → clears all tasks\n"
+        "• \"Fix the login bug\" → sends to current session\n\n"
         
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "<b>🔄 AUTO GIT SYNC</b>\n"
@@ -1102,8 +1175,130 @@ async def skip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =============================================================================
-# NEW FEATURE: Voice Message Support
+# NEW FEATURE: Voice Message Support with Smart Routing
 # =============================================================================
+
+async def route_voice_intent(update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                             intent: str, project: str, task_text: str, status_msg) -> bool:
+    """
+    Route detected intent to appropriate command.
+    Returns True if handled, False to continue with normal processing.
+    """
+    global queue_running, queue_paused
+    user_id = update.effective_user.id
+    
+    if intent == "add_task":
+        if not project:
+            await status_msg.edit_text(
+                f"🎤 Detected: Add task\n\n"
+                f"❌ No project specified. Say: \"Add task ON CHADIX to build X\"\n\n"
+                f"Available projects: {', '.join(PROJECT_SHORTCUTS.keys())}"
+            )
+            return True
+        if not task_text:
+            await status_msg.edit_text(f"🎤 Detected: Add task on {project}\n\n❌ No task description provided")
+            return True
+        
+        # Add to queue
+        task = {
+            "id": str(uuid.uuid4())[:8],
+            "project": project,
+            "task": task_text,
+            "autonomy": DEFAULT_AUTONOMY,
+            "model": DEFAULT_MODEL_SHORTCUT,
+            "sync": DEFAULT_SYNC,
+            "status": "pending",
+            "added": datetime.now().isoformat()
+        }
+        task_queue.append(task)
+        
+        await status_msg.edit_text(
+            f"🎤 ✅ Added to queue!\n\n"
+            f"📁 Project: {project}\n"
+            f"📝 Task: {task_text}\n"
+            f"⚡ {DEFAULT_AUTONOMY} | 🤖 {DEFAULT_MODEL_SHORTCUT}\n\n"
+            f"Queue now has {len(task_queue)} task(s). /run to start"
+        )
+        return True
+    
+    elif intent == "switch_project":
+        if not project:
+            await status_msg.edit_text(
+                f"🎤 Detected: Switch project\n\n"
+                f"❌ No project specified. Say: \"Switch to CHADIX\"\n\n"
+                f"Available: {', '.join(PROJECT_SHORTCUTS.keys())}"
+            )
+            return True
+        
+        # Switch project using defaults
+        path = PROJECT_SHORTCUTS.get(project)
+        resolved_cwd = os.path.expanduser(path)
+        session_id = f"tg-{uuid.uuid4().hex[:8]}"
+        
+        session_autonomy[session_id] = DEFAULT_AUTONOMY
+        session_models[session_id] = resolve_model(DEFAULT_MODEL_SHORTCUT)
+        if DEFAULT_SYNC:
+            session_git_sync[session_id] = {"pull": True, "push": True}
+        
+        active_session_per_user[user_id] = {
+            "session_id": session_id,
+            "cwd": resolved_cwd
+        }
+        
+        short_cwd = resolved_cwd.replace(os.path.expanduser("~"), "~")
+        await status_msg.edit_text(
+            f"🎤 ✅ Switched to {project}!\n\n"
+            f"📁 {short_cwd}\n"
+            f"⚡ {DEFAULT_AUTONOMY} | 🤖 {DEFAULT_MODEL_SHORTCUT} | {'📤 sync' if DEFAULT_SYNC else ''}\n\n"
+            f"Ready for commands!"
+        )
+        return True
+    
+    elif intent == "show_queue":
+        if not task_queue:
+            await status_msg.edit_text("🎤 📋 Queue is empty\n\nAdd tasks with voice: \"Add task on chadix to build X\"")
+        else:
+            lines = [f"🎤 📋 Queue ({len(task_queue)} tasks)\n"]
+            status_emoji = {"pending": "⏳", "running": "🔄", "completed": "✅", "failed": "❌"}
+            for i, task in enumerate(task_queue[:5], 1):  # Show first 5
+                emoji = status_emoji.get(task["status"], "⏳")
+                lines.append(f"{emoji} {task['project']}: {task['task'][:30]}...")
+            if len(task_queue) > 5:
+                lines.append(f"\n...and {len(task_queue) - 5} more")
+            lines.append("\n\nSay \"run queue\" to start!")
+            await status_msg.edit_text("\n".join(lines))
+        return True
+    
+    elif intent == "run_queue":
+        if not task_queue:
+            await status_msg.edit_text("🎤 Queue is empty - nothing to run")
+            return True
+        pending = [t for t in task_queue if t["status"] == "pending"]
+        if not pending:
+            await status_msg.edit_text("🎤 All tasks completed! Say \"clear queue\" to reset")
+            return True
+        
+        queue_running = True
+        queue_paused = False
+        await status_msg.edit_text(f"🎤 ▶️ Starting queue ({len(pending)} tasks)...")
+        await process_queue(update, context)
+        return True
+    
+    elif intent == "pause_queue":
+        queue_paused = True
+        await status_msg.edit_text("🎤 ⏸ Queue paused")
+        return True
+    
+    elif intent == "clear_queue":
+        count = len(task_queue)
+        task_queue.clear()
+        queue_running = False
+        queue_paused = False
+        await status_msg.edit_text(f"🎤 🗑 Cleared {count} tasks from queue")
+        return True
+    
+    return False
+
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle voice messages - transcribe and send to Droid"""
@@ -1168,10 +1363,18 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await status_msg.edit_text(f"🎤 \"{transcribed_text}\"\n\nProcessing...")
         
-        # Process transcribed text directly (can't modify Message object)
         user_id = update.effective_user.id
         
-        # Get active session
+        # Smart routing - detect intent from voice
+        intent, project, task_text = detect_voice_intent(transcribed_text)
+        
+        if intent:
+            await status_msg.edit_text(f"🎤 \"{transcribed_text}\"\n\n🧠 Detected: {intent}")
+            routed = await route_voice_intent(update, context, intent, project, task_text, status_msg)
+            if routed:
+                return
+        
+        # No intent detected - send to current session as normal
         session_id = None
         session_cwd = DEFAULT_CWD
         if user_id in active_session_per_user:
