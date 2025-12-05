@@ -412,31 +412,30 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         return
     
-    shortcuts_list = "\n".join([f"  <code>{k}</code> → {v}" for k, v in PROJECT_SHORTCUTS.items()]) if PROJECT_SHORTCUTS else "  (none configured)"
+    shortcuts_list = ", ".join(PROJECT_SHORTCUTS.keys()) if PROJECT_SHORTCUTS else "(none)"
     
     await update.message.reply_text(
-        "🤖 <b>Droid Telegram Bot - Enhanced Edition</b>\n\n"
-        "<b>🆕 New Features:</b>\n"
-        "• <b>Voice Messages</b> - Send voice notes, they get transcribed and sent to Droid\n"
-        "• <b>Project Shortcuts</b> - /proj chadix instead of typing full paths\n"
-        "• <b>Auto Git Sync</b> - Auto pull before tasks, push after\n\n"
-        "<b>⚙️ Commands:</b>\n"
+        "🤖 <b>Droid Telegram Bot - Enhanced</b>\n\n"
+        f"<b>Defaults:</b> {DEFAULT_AUTONOMY}, {DEFAULT_MODEL_SHORTCUT}, {'sync' if DEFAULT_SYNC else 'nosync'}\n\n"
+        "<b>📁 Quick Start:</b>\n"
+        f"<code>/proj {list(PROJECT_SHORTCUTS.keys())[0] if PROJECT_SHORTCUTS else 'myapp'}</code> - Start working\n"
+        "<code>/add project Task description</code> - Queue task\n\n"
+        "<b>⚙️ Project Commands:</b>\n"
+        "/proj - Switch project (uses defaults)\n"
         "/new [path] - New session in directory\n"
-        "/proj [shortcut] - Switch to project by shortcut\n"
-        "/sync - Toggle auto git pull/push\n"
-        "/pull - Manually pull latest\n"
-        "/push [msg] - Commit and push with message\n"
-        "/session - List/switch sessions\n"
-        "/auto [level] - Set autonomy (off/low/medium/high/unsafe)\n"
-        "/cwd - Show current directory\n"
-        "/git [cmd] - Run git commands\n"
-        "/stop - Stop running task\n"
-        "/status - Bot status\n\n"
-        f"<b>📁 Project Shortcuts:</b>\n{shortcuts_list}\n\n"
-        "<b>💡 Tips:</b>\n"
-        "• Reply to any message to continue that session\n"
-        "• Use /auto high to enable tool execution\n"
-        "• Voice messages work great for quick ideas!",
+        "/session - List/switch sessions\n\n"
+        "<b>📋 Queue Commands:</b>\n"
+        "/add - Add task to queue\n"
+        "/queue - View queue\n"
+        "/run - Start processing\n"
+        "/pause /skip /clear - Control queue\n\n"
+        "<b>🔧 Other:</b>\n"
+        "/sync /pull /push - Git controls\n"
+        "/auto [level] - Set autonomy\n"
+        "/status - Bot status\n"
+        "/stop - Stop current task\n\n"
+        f"<b>Projects:</b> {shortcuts_list}\n\n"
+        "💡 Voice messages supported!",
         parse_mode=ParseMode.HTML
     )
 

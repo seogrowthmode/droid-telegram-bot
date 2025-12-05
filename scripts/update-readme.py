@@ -25,10 +25,17 @@ COMMAND_DOCS = {
     "stop": ("Stop currently running task", "core"),
     "git": ("Run git commands in current directory", "core"),
     # Enhanced commands
-    "proj": ("List/switch project shortcuts", "enhanced"),
+    "proj": ("Switch project (defaults: high, opus, sync)", "enhanced"),
     "sync": ("Toggle auto git sync options", "enhanced"),
     "pull": ("Manually pull latest changes", "enhanced"),
     "push": ("Commit all changes and push", "enhanced"),
+    # Queue commands
+    "add": ("Add task to queue", "enhanced"),
+    "queue": ("View task queue", "enhanced"),
+    "run": ("Start processing queue", "enhanced"),
+    "pause": ("Pause queue processing", "enhanced"),
+    "skip": ("Skip current task", "enhanced"),
+    "clear": ("Clear all queued tasks", "enhanced"),
 }
 
 def extract_commands_from_bot():

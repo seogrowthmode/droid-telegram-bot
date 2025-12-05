@@ -130,10 +130,16 @@ Note: First voice message may be slow as Whisper downloads the model (~140MB).
 ### Enhanced Commands (This Fork)
 | Command | Description |
 |---------|-------------|
-| `/proj` | List/switch project shortcuts |
+| `/proj` | Switch project (defaults: high, opus, sync) |
 | `/sync` | Toggle auto git sync options |
 | `/pull` | Manually pull latest changes |
 | `/push` | Commit all changes and push |
+| `/add` | Add task to queue |
+| `/queue` | View task queue |
+| `/run` | Start processing queue |
+| `/pause` | Pause queue processing |
+| `/clear` | Clear all queued tasks |
+| `/skip` | Skip current task |
 
 
 ## Autonomy Levels
