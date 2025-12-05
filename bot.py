@@ -451,23 +451,27 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines = ["<b>📁 Project Shortcuts</b>\n"]
             for shortcut, path in PROJECT_SHORTCUTS.items():
                 lines.append(f"<code>/proj {shortcut}</code> → {path}")
-            lines.append(f"\n<b>Usage:</b> <code>/proj shortcut [auto] [model] [sync]</code>")
+            lines.append(f"\n<b>Usage:</b> <code>/proj shortcut [auto] [model] [sync] [@name]</code>")
             lines.append(f"<b>Autonomy:</b> off, low, medium, high, unsafe")
             lines.append(f"<b>Models:</b> {model_list}")
             lines.append(f"<b>Sync:</b> add 'sync' to auto-push after each task")
-            lines.append(f"\n<b>Example:</b> <code>/proj chadix high sonnet sync</code>")
+            lines.append(f"<b>Name:</b> @myname to name the session")
+            lines.append(f"\n<b>Example:</b> <code>/proj chadix high sonnet sync @homepage</code>")
             await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
         return
     
-    # Parse arguments: /proj <shortcut> [autonomy] [model] [sync]
+    # Parse arguments: /proj <shortcut> [autonomy] [model] [sync] [@name]
     shortcut = args[0].lower()
     autonomy_level = "off"
     model_shortcut = None
     auto_sync = False
+    session_name = None
     
     for arg in args[1:]:
         arg_lower = arg.lower()
-        if arg_lower in AUTONOMY_LEVELS:
+        if arg.startswith("@"):
+            session_name = arg[1:]  # Remove @ prefix
+        elif arg_lower in AUTONOMY_LEVELS:
             autonomy_level = arg_lower
         elif arg_lower in ["sync", "push", "autopush"]:
             auto_sync = True
@@ -499,7 +503,8 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             git_msg = f"\n⚠️ Pull failed: {pull_msg}"
     
     # Create session with ID immediately (so /auto works)
-    temp_session_id = f"tg-{str(uuid.uuid4())[:8]}"
+    # Use custom name if provided, otherwise generate random ID
+    temp_session_id = session_name if session_name else f"tg-{str(uuid.uuid4())[:8]}"
     short_cwd = resolved_cwd.replace(os.path.expanduser("~"), "~")
     git_state, git_info = get_git_status(resolved_cwd)
     
