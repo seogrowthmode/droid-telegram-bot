@@ -15,8 +15,9 @@ A Telegram bot that interfaces with [Factory's Droid CLI](https://factory.ai), a
 - 🔧 **Git Integration** - Quick `/git` commands for common operations
 
 ### Enhanced Features (This Fork)
+- 🔀 **CLI Toggle** - Switch between Droid and Claude Code CLI backends
+- 📁 **Auto Projects** - Auto-track projects from directories you work in
 - 🔄 **Auto Git Sync** - Automatically pull before tasks and push after changes
-- 📁 **Project Shortcuts** - Quick project switching with `/proj` command
 - ⚡ **Smart Defaults** - High autonomy, Opus model, sync on by default
 - 📋 **Task Queue** - Queue multiple tasks with `/add`, process with `/run`
 - 🎤 **Smart Voice** - Voice commands with intent detection (add task, switch project, run queue)
@@ -134,7 +135,8 @@ Note: First voice message may be slow as Whisper downloads the model (~140MB).
 ### Enhanced Commands (This Fork)
 | Command | Description |
 |---------|-------------|
-| `/proj` | Switch project (defaults: high, opus, sync) |
+| `/projects` | List all auto-tracked projects |
+| `/proj` | Switch project (auto-tracked or manual shortcut) |
 | `/sync` | Toggle auto git sync options |
 | `/pull` | Manually pull latest changes |
 | `/push` | Commit all changes and push |

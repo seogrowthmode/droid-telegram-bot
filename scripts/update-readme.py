@@ -27,7 +27,8 @@ COMMAND_DOCS = {
     "stop": ("Stop currently running task", "core"),
     "git": ("Run git commands in current directory", "core"),
     # Enhanced commands
-    "proj": ("Switch project (defaults: high, opus, sync)", "enhanced"),
+    "projects": ("List all auto-tracked projects", "enhanced"),
+    "proj": ("Switch project (auto-tracked or manual shortcut)", "enhanced"),
     "sync": ("Toggle auto git sync options", "enhanced"),
     "pull": ("Manually pull latest changes", "enhanced"),
     "push": ("Commit all changes and push", "enhanced"),

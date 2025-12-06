@@ -39,6 +39,10 @@ export DROID_DEFAULT_AUTONOMY="high"
 export DROID_DEFAULT_MODEL="opus"
 export DROID_DEFAULT_SYNC="true"
 
+# CLI backend: "droid" or "claude"
+export DROID_CLI_TYPE="claude"
+export DROID_PATH="claude"
+
 # Run bot and save PID to lock file
 python3 bot.py &
 BOT_PID=$!

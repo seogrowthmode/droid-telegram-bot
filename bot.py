@@ -35,6 +35,109 @@ SESSIONS_FILE = os.environ.get("DROID_SESSIONS_FILE", "/var/lib/droid-telegram/s
 DROID_PATH = os.environ.get("DROID_PATH", "droid")
 DEFAULT_CWD = os.environ.get("DROID_DEFAULT_CWD", os.path.expanduser("~"))
 
+# =============================================================================
+# CLI TYPE: Toggle between "droid" and "claude" CLI
+# =============================================================================
+# Set via DROID_CLI_TYPE env var: "droid" (default) or "claude"
+CLI_TYPE = os.environ.get("DROID_CLI_TYPE", "droid").lower()
+if CLI_TYPE not in ["droid", "claude"]:
+    CLI_TYPE = "droid"
+
+# Autonomy level mapping between CLIs
+# Droid: off, low, medium, high, unsafe
+# Claude: default (no flag), acceptEdits, bypassPermissions, plan
+CLAUDE_AUTONOMY_MAP = {
+    "off": "plan",           # Read-only / planning mode
+    "low": "acceptEdits",    # Accept edits without confirmation
+    "medium": "acceptEdits", # Same as low for Claude
+    "high": "bypassPermissions",  # Bypass most permission checks
+    "unsafe": "bypassPermissions",  # Claude's max is bypassPermissions
+}
+
+def is_valid_uuid(val):
+    """Check if string is a valid UUID"""
+    try:
+        uuid.UUID(str(val))
+        return True
+    except (ValueError, AttributeError):
+        return False
+
+def generate_session_id():
+    """Generate a session ID appropriate for the current CLI"""
+    if CLI_TYPE == "claude":
+        # Claude requires full UUID format
+        return str(uuid.uuid4())
+    else:
+        # Droid accepts short IDs
+        return f"tg-{uuid.uuid4().hex[:8]}"
+
+def build_cli_command(prompt, session_id=None, autonomy_level="off", model=None, output_format=None):
+    """Build CLI command based on CLI_TYPE (droid or claude)"""
+    if CLI_TYPE == "claude":
+        cmd = [DROID_PATH, "-p"]  # -p for print mode (non-interactive)
+        
+        # Output format - Claude requires --verbose for stream-json
+        if output_format:
+            cmd.extend(["--output-format", output_format])
+            if output_format == "stream-json":
+                cmd.append("--verbose")
+        
+        # Autonomy via permission-mode
+        if autonomy_level and autonomy_level != "off":
+            permission_mode = CLAUDE_AUTONOMY_MAP.get(autonomy_level, "default")
+            if permission_mode != "default":
+                cmd.extend(["--permission-mode", permission_mode])
+        
+        # Model
+        if model:
+            cmd.extend(["--model", model])
+        
+        # Session continuation - Claude requires valid UUID format
+        # Skip session flag if not a valid UUID (Claude will create new session)
+        if session_id and is_valid_uuid(session_id):
+            cmd.extend(["--session-id", session_id])
+        # Note: For Claude, we lose session continuity with non-UUID IDs
+        # This is a limitation of Claude CLI vs Droid
+        
+        # Prompt must be last
+        cmd.append(prompt)
+        
+    else:  # droid (default)
+        cmd = [DROID_PATH, "exec"]
+        
+        # Autonomy
+        if autonomy_level and autonomy_level != "off":
+            cmd.extend(["--auto", autonomy_level])
+        
+        # Model
+        if model:
+            cmd.extend(["-m", model])
+        
+        # Output format
+        if output_format:
+            cmd.extend(["--output-format", output_format])
+        
+        # Session
+        if session_id:
+            cmd.extend(["-s", session_id])
+        
+        # Prompt
+        cmd.append(prompt)
+    
+    return cmd
+
+def get_cli_version():
+    """Get version string for the current CLI"""
+    try:
+        result = subprocess.run([DROID_PATH, "--version"], capture_output=True, text=True, timeout=10)
+        return result.stdout.strip() or "unknown"
+    except:
+        return "unknown"
+
+def get_cli_name():
+    """Get display name for current CLI"""
+    return "Claude Code" if CLI_TYPE == "claude" else "Droid"
+
 # OpenAI API for session naming (optional - falls back to default naming if not set)
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
@@ -70,8 +173,9 @@ AUTO_GIT_PUSH = os.environ.get("DROID_AUTO_GIT_PUSH", "false").lower() == "true"
 # =============================================================================
 # NEW FEATURE: Model Shortcuts
 # =============================================================================
-MODEL_SHORTCUTS = {
-    "opus": "claude-opus-4-5-20251101",
+# Model shortcuts - different mappings for each CLI
+DROID_MODEL_SHORTCUTS = {
+    "opus": "byok/claude-opus-4-5-telegram",
     "sonnet": "claude-sonnet-4-5-20250929",
     "haiku": "claude-haiku-4-5-20251001",
     "opus4.1": "claude-opus-4-1-20250805",
@@ -80,6 +184,19 @@ MODEL_SHORTCUTS = {
     "gemini": "gemini-3-pro-preview",
     "glm": "glm-4.6",
 }
+
+CLAUDE_MODEL_SHORTCUTS = {
+    "opus": "opus",
+    "sonnet": "sonnet", 
+    "haiku": "haiku",
+    "opus4.1": "claude-opus-4-1-20250805",
+}
+
+def get_model_shortcuts():
+    """Get model shortcuts for current CLI"""
+    return CLAUDE_MODEL_SHORTCUTS if CLI_TYPE == "claude" else DROID_MODEL_SHORTCUTS
+
+MODEL_SHORTCUTS = get_model_shortcuts()
 AUTONOMY_LEVELS = ["off", "low", "medium", "high", "unsafe"]
 
 # =============================================================================
@@ -94,15 +211,20 @@ DEFAULT_SYNC = os.environ.get("DROID_DEFAULT_SYNC", "true").lower() == "true"
 # Update this dict when adding features!
 # =============================================================================
 BOT_FEATURES = {
+    "cli_toggle": {
+        "emoji": "🔀",
+        "name": "CLI Toggle",
+        "desc": "Switch between Droid and Claude Code CLI backends"
+    },
+    "auto_projects": {
+        "emoji": "📁",
+        "name": "Auto Projects",
+        "desc": "Auto-track projects from directories you work in"
+    },
     "auto_git_sync": {
         "emoji": "🔄",
         "name": "Auto Git Sync",
         "desc": "Automatically pull before tasks and push after changes"
-    },
-    "project_shortcuts": {
-        "emoji": "📁",
-        "name": "Project Shortcuts",
-        "desc": "Quick project switching with `/proj` command"
     },
     "smart_defaults": {
         "emoji": "⚡",
@@ -168,7 +290,7 @@ def generate_session_name(first_message: str, cwd: str = None) -> str:
     Falls back to random ID if OpenAI isn't configured or fails.
     """
     if not OPENAI_API_KEY or not first_message:
-        return f"tg-{uuid.uuid4().hex[:8]}"
+        return generate_session_id()
     
     try:
         from openai import OpenAI
@@ -212,7 +334,7 @@ Output ONLY the name, nothing else."""
         logging.warning(f"Failed to generate session name via LLM: {e}")
     
     # Fallback to random ID
-    return f"tg-{uuid.uuid4().hex[:8]}"
+    return generate_session_id()
 
 
 async def generate_session_name_async(first_message: str, cwd: str = None) -> str:
@@ -292,28 +414,37 @@ def fuzzy_match_project(text: str) -> str:
 
 
 def get_available_models():
-    """Fetch available models from droid CLI"""
+    """Fetch available models from CLI (droid or claude)"""
     try:
-        result = subprocess.run(
-            [DROID_PATH, "exec", "--help"],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode == 0:
-            # Parse models from help output
-            models = {}
-            in_models = False
-            for line in result.stdout.split('\n'):
-                if 'Available Models:' in line:
-                    in_models = True
-                    continue
-                if in_models:
-                    if line.strip() and not line.startswith(' '):
-                        break
-                    match = re.match(r'\s+(\S+)\s+(.+)', line)
-                    if match:
-                        model_id, name = match.groups()
-                        models[model_id] = name.strip()
-            return models if models else None
+        if CLI_TYPE == "claude":
+            # Claude CLI doesn't have a models list command, return common aliases
+            return {
+                "opus": "Claude Opus",
+                "sonnet": "Claude Sonnet",
+                "haiku": "Claude Haiku",
+            }
+        else:
+            # Droid CLI - parse from exec --help
+            result = subprocess.run(
+                [DROID_PATH, "exec", "--help"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                # Parse models from help output
+                models = {}
+                in_models = False
+                for line in result.stdout.split('\n'):
+                    if 'Available Models:' in line:
+                        in_models = True
+                        continue
+                    if in_models:
+                        if line.strip() and not line.startswith(' '):
+                            break
+                        match = re.match(r'\s+(\S+)\s+(.+)', line)
+                        if match:
+                            model_id, name = match.groups()
+                            models[model_id] = name.strip()
+                return models if models else None
     except:
         pass
     return None
@@ -365,6 +496,69 @@ session_autonomy = {}
 active_processes = {}
 session_git_sync = {}  # Track git sync settings per session
 session_models = {}  # Track model per session
+
+# =============================================================================
+# AUTO-PROJECT TRACKING
+# =============================================================================
+# Projects are auto-registered when you work in a directory
+# Format: { "project_name": { "path": "~/dev/...", "sessions": [...], "last_active": "..." } }
+tracked_projects = {}
+
+def register_project(cwd: str, session_id: str = None):
+    """Auto-register a project when working in a directory"""
+    if not cwd or cwd == os.path.expanduser("~"):
+        return None  # Don't track home directory
+    
+    # Get project name from folder
+    project_name = os.path.basename(cwd.rstrip('/'))
+    if not project_name:
+        return None
+    
+    # Normalize path for storage (use ~ for home)
+    normalized_path = cwd.replace(os.path.expanduser("~"), "~")
+    
+    now = datetime.now().isoformat()
+    
+    if project_name not in tracked_projects:
+        tracked_projects[project_name] = {
+            "path": normalized_path,
+            "sessions": [],
+            "last_active": now,
+            "created": now
+        }
+        logger.info(f"Auto-registered new project: {project_name}")
+    
+    # Update last active
+    tracked_projects[project_name]["last_active"] = now
+    
+    # Add session if provided and not already tracked
+    if session_id and session_id not in tracked_projects[project_name]["sessions"]:
+        tracked_projects[project_name]["sessions"].append(session_id)
+        # Keep only last 50 sessions per project
+        tracked_projects[project_name]["sessions"] = tracked_projects[project_name]["sessions"][-50:]
+    
+    return project_name
+
+def get_project_by_name(name: str):
+    """Find a project by name (case-insensitive, partial match)"""
+    name_lower = name.lower()
+    
+    # Exact match first
+    if name_lower in [p.lower() for p in tracked_projects]:
+        for p in tracked_projects:
+            if p.lower() == name_lower:
+                return p, tracked_projects[p]
+    
+    # Then check manual shortcuts
+    if name_lower in PROJECT_SHORTCUTS:
+        return name_lower, {"path": PROJECT_SHORTCUTS[name_lower], "sessions": [], "last_active": None}
+    
+    # Partial match
+    for p in tracked_projects:
+        if name_lower in p.lower():
+            return p, tracked_projects[p]
+    
+    return None, None
 
 # =============================================================================
 # NEW FEATURE: Task Queue
@@ -495,7 +689,7 @@ def get_git_status(cwd):
 # =============================================================================
 
 def load_sessions():
-    global sessions, active_session_per_user, session_history, session_autonomy, session_git_sync, session_models
+    global sessions, active_session_per_user, session_history, session_autonomy, session_git_sync, session_models, tracked_projects
     try:
         if os.path.exists(SESSIONS_FILE):
             with open(SESSIONS_FILE, 'r') as f:
@@ -506,7 +700,8 @@ def load_sessions():
                 session_autonomy = data.get("session_autonomy", {})
                 session_git_sync = data.get("session_git_sync", {})
                 session_models = data.get("session_models", {})
-                logger.info(f"Loaded {len(sessions)} sessions")
+                tracked_projects = data.get("tracked_projects", {})
+                logger.info(f"Loaded {len(sessions)} sessions, {len(tracked_projects)} projects")
     except Exception as e:
         logger.error(f"Failed to load sessions: {e}")
 
@@ -518,7 +713,8 @@ def save_sessions():
             "session_history": session_history[-100:],
             "session_autonomy": session_autonomy,
             "session_git_sync": session_git_sync,
-            "session_models": session_models
+            "session_models": session_models,
+            "tracked_projects": tracked_projects
         }
         with open(SESSIONS_FILE, 'w') as f:
             json.dump(data, f, indent=2)
@@ -530,6 +726,8 @@ def add_to_session_history(session_id, cwd, first_message=None):
         return
     for entry in session_history:
         if entry.get("session_id") == session_id:
+            # Update existing entry's last active and register project
+            register_project(cwd, session_id)
             return
     session_history.append({
         "session_id": session_id,
@@ -537,6 +735,8 @@ def add_to_session_history(session_id, cwd, first_message=None):
         "started": datetime.now().isoformat(),
         "first_message": (first_message[:50] + "...") if first_message and len(first_message) > 50 else first_message
     })
+    # Auto-register project
+    register_project(cwd, session_id)
     save_sessions()
 
 # =============================================================================
@@ -617,31 +817,32 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         return
     
-    shortcuts_list = ", ".join(PROJECT_SHORTCUTS.keys()) if PROJECT_SHORTCUTS else "(none)"
-    first_project = list(PROJECT_SHORTCUTS.keys())[0] if PROJECT_SHORTCUTS else "myapp"
+    # Get project count from both sources
+    all_project_names = list(set(list(PROJECT_SHORTCUTS.keys()) + list(tracked_projects.keys())))
+    project_count = len(all_project_names)
+    first_project = all_project_names[0] if all_project_names else "myapp"
     
     await update.message.reply_text(
-        "🤖 <b>Droid Telegram Bot</b>\n\n"
+        f"🤖 <b>{get_cli_name()} Telegram Bot</b>\n\n"
         f"<b>⚡ Defaults:</b> {DEFAULT_AUTONOMY} | {DEFAULT_MODEL_SHORTCUT} | {'sync' if DEFAULT_SYNC else 'nosync'}\n\n"
         
-        "<b>📁 Projects:</b>\n"
-        f"<code>/proj {first_project}</code> - Start with defaults\n"
-        f"<code>/proj {first_project} @taskname</code> - Named session\n"
-        f"<code>/proj {first_project} nosync</code> - No auto-push\n\n"
+        "<b>📁 Projects (auto-tracked):</b>\n"
+        "<code>/projects</code> - List all projects\n"
+        f"<code>/proj {first_project}</code> - Switch to project\n"
+        f"<code>/proj {first_project} @taskname</code> - Named session\n\n"
         
         "<b>📋 Task Queue:</b>\n"
         f"<code>/add {first_project} Build feature X</code>\n"
-        f"<code>/add {first_project} Fix the login bug</code>\n"
         "<code>/run</code> - Process all queued tasks\n\n"
         
         "<b>🎤 Voice:</b> Just send a voice message!\n\n"
         
         "<b>📂 Git:</b> /pull /push /sync\n"
         "<b>⚙️ Session:</b> /new /session /auto /stop\n"
-        "<b>📊 Info:</b> /status /cwd /queue\n\n"
+        "<b>📊 Info:</b> /status /cwd /queue /projects\n\n"
         
-        f"<b>Projects:</b> {shortcuts_list}\n"
-        "<b>Models:</b> opus, sonnet, haiku, gpt, codex, gemini\n\n"
+        f"<b>Projects:</b> {project_count} tracked\n"
+        "<b>Models:</b> opus, sonnet, haiku\n\n"
         "Type /features for full details",
         parse_mode=ParseMode.HTML
     )
@@ -733,6 +934,91 @@ async def features_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # =============================================================================
+# NEW COMMAND: Projects (Auto-tracked)
+# =============================================================================
+
+async def projects_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all auto-tracked projects"""
+    if not is_authorized(update.effective_user.id):
+        return
+    
+    args = update.message.text.split()[1:] if len(update.message.text.split()) > 1 else []
+    
+    # Combine tracked projects with manual shortcuts
+    all_projects = {}
+    
+    # Add manual shortcuts first
+    for name, path in PROJECT_SHORTCUTS.items():
+        all_projects[name] = {
+            "path": path,
+            "sessions": [],
+            "last_active": None,
+            "source": "manual"
+        }
+    
+    # Add/override with tracked projects
+    for name, data in tracked_projects.items():
+        all_projects[name] = {**data, "source": "auto"}
+    
+    if not all_projects:
+        await update.message.reply_text(
+            "📁 <b>No projects yet</b>\n\n"
+            "Projects are auto-tracked when you work in directories.\n"
+            "Use <code>/new ~/dev/myproject</code> to start.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
+    # Sort by last_active (most recent first)
+    def sort_key(item):
+        name, data = item
+        last = data.get("last_active")
+        if not last:
+            return ""
+        return last
+    
+    sorted_projects = sorted(all_projects.items(), key=sort_key, reverse=True)
+    
+    # Format time ago
+    def time_ago(iso_str):
+        if not iso_str:
+            return "never"
+        try:
+            dt = datetime.fromisoformat(iso_str)
+            delta = datetime.now() - dt
+            if delta.days > 0:
+                return f"{delta.days}d ago"
+            elif delta.seconds > 3600:
+                return f"{delta.seconds // 3600}h ago"
+            elif delta.seconds > 60:
+                return f"{delta.seconds // 60}m ago"
+            else:
+                return "just now"
+        except:
+            return "unknown"
+    
+    lines = ["📁 <b>Projects</b>\n"]
+    
+    for name, data in sorted_projects[:15]:  # Show top 15
+        path = data.get("path", "")
+        session_count = len(data.get("sessions", []))
+        last = time_ago(data.get("last_active"))
+        source_icon = "📌" if data.get("source") == "manual" else ""
+        
+        lines.append(f"<b>• {name}</b> {source_icon}")
+        lines.append(f"  <code>{path}</code>")
+        lines.append(f"  {session_count} sessions, {last}\n")
+    
+    if len(all_projects) > 15:
+        lines.append(f"\n<i>...and {len(all_projects) - 15} more</i>")
+    
+    lines.append("\n<b>Commands:</b>")
+    lines.append("<code>/proj name</code> - Switch to project")
+    lines.append("<code>/proj name sessions</code> - View sessions")
+    
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+# =============================================================================
 # NEW COMMAND: Project Shortcuts
 # =============================================================================
 
@@ -744,27 +1030,8 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = update.message.text.split()[1:] if len(update.message.text.split()) > 1 else []
     
     if not args:
-        # List available shortcuts with usage info
-        model_list = ", ".join(MODEL_SHORTCUTS.keys())
-        if not PROJECT_SHORTCUTS:
-            await update.message.reply_text(
-                "No project shortcuts configured.\n\n"
-                "Add them to your .env file:\n"
-                "<code>DROID_PROJECT_SHORTCUTS='{\"myapp\": \"~/dev/myapp\"}'</code>",
-                parse_mode=ParseMode.HTML
-            )
-        else:
-            lines = ["<b>📁 Project Shortcuts</b>\n"]
-            for shortcut, path in PROJECT_SHORTCUTS.items():
-                lines.append(f"<code>/proj {shortcut}</code> → {path}")
-            lines.append(f"\n<b>Defaults:</b> {DEFAULT_AUTONOMY}, {DEFAULT_MODEL_SHORTCUT}, {'sync' if DEFAULT_SYNC else 'nosync'}")
-            lines.append(f"\n<b>Usage:</b> <code>/proj shortcut [@name]</code>")
-            lines.append(f"<b>Override:</b> add autonomy/model/nosync to change")
-            lines.append(f"\n<b>Examples:</b>")
-            lines.append(f"<code>/proj chadix</code> (uses defaults)")
-            lines.append(f"<code>/proj chadix @homepage</code> (with name)")
-            lines.append(f"<code>/proj chadix sonnet nosync</code> (override)")
-            await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+        # Redirect to /projects command
+        await projects_command(update, context)
         return
     
     # Parse arguments: /proj <shortcut> [autonomy] [model] [sync] [@name]
@@ -788,13 +1055,31 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif arg_lower in MODEL_SHORTCUTS or resolve_model(arg_lower):
             model_shortcut = arg_lower
     
-    if shortcut not in PROJECT_SHORTCUTS:
-        available = ", ".join(PROJECT_SHORTCUTS.keys()) if PROJECT_SHORTCUTS else "none"
-        await update.message.reply_text(f"❌ Unknown shortcut: {shortcut}\n\nAvailable: {available}")
+    # Look up project - check manual shortcuts first, then tracked projects
+    path = None
+    if shortcut in PROJECT_SHORTCUTS:
+        path = PROJECT_SHORTCUTS[shortcut]
+    else:
+        # Check tracked projects (case-insensitive)
+        project_name, project_data = get_project_by_name(shortcut)
+        if project_data:
+            path = project_data.get("path")
+            shortcut = project_name  # Use the actual project name
+    
+    if not path:
+        # List available projects
+        all_names = list(PROJECT_SHORTCUTS.keys()) + list(tracked_projects.keys())
+        available = ", ".join(all_names[:10]) if all_names else "none"
+        if len(all_names) > 10:
+            available += f" (+{len(all_names) - 10} more)"
+        await update.message.reply_text(
+            f"❌ Unknown project: {shortcut}\n\n"
+            f"Available: {available}\n\n"
+            f"Use /projects to see all projects",
+            parse_mode=ParseMode.HTML
+        )
         return
     
-    # Resolve the path
-    path = PROJECT_SHORTCUTS[shortcut]
     resolved_cwd = os.path.expanduser(path)
     
     if not os.path.isdir(resolved_cwd):
@@ -813,8 +1098,8 @@ async def proj_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             git_msg = f"\n⚠️ Pull failed: {pull_msg}"
     
     # Create session with ID immediately (so /auto works)
-    # Use custom name if provided, otherwise generate random ID
-    temp_session_id = session_name if session_name else f"tg-{str(uuid.uuid4())[:8]}"
+    # Use custom name if provided, otherwise generate appropriate ID for CLI
+    temp_session_id = session_name if session_name else generate_session_id()
     short_cwd = resolved_cwd.replace(os.path.expanduser("~"), "~")
     git_state, git_info = get_git_status(resolved_cwd)
     
@@ -1374,7 +1659,7 @@ async def route_voice_intent(update: Update, context: ContextTypes.DEFAULT_TYPE,
         # Switch project using defaults
         path = PROJECT_SHORTCUTS.get(project)
         resolved_cwd = os.path.expanduser(path)
-        session_id = f"tg-{uuid.uuid4().hex[:8]}"
+        session_id = generate_session_id()
         
         session_autonomy[session_id] = DEFAULT_AUTONOMY
         session_models[session_id] = resolve_model(DEFAULT_MODEL_SHORTCUT)
@@ -1613,7 +1898,7 @@ async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prompt = None
 
     user_id = update.effective_user.id
-    temp_session_ref = str(uuid.uuid4())[:8]
+    temp_session_ref = generate_session_id()
 
     # Auto git pull if enabled
     git_sync_msg = ""
@@ -1805,8 +2090,8 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update.effective_user.id):
         return
     try:
-        droid_result = subprocess.run([DROID_PATH, "--version"], capture_output=True, text=True, timeout=10)
-        droid_version = droid_result.stdout.strip() or "unknown"
+        cli_version = get_cli_version()
+        cli_name = get_cli_name()
         stream_status = "ON" if streaming_mode else "OFF"
         
         user_id = update.effective_user.id
@@ -1821,7 +2106,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(
             f"✅ <b>Bot Status: Running</b>\n\n"
-            f"🤖 Droid: {droid_version}\n"
+            f"🤖 CLI: {cli_name} ({cli_version})\n"
             f"⚡ Live updates: {stream_status}\n"
             f"📁 Project shortcuts: {shortcuts_count}\n"
             f"🔄 Auto pull: {'ON' if AUTO_GIT_PULL else 'OFF'}\n"
@@ -1990,19 +2275,19 @@ async def handle_message_streaming(user_message, session_id, status_msg, cwd=Non
     env = os.environ.copy()
     working_dir = cwd or DEFAULT_CWD
 
-    cmd = [DROID_PATH, "exec"]
-    if autonomy_level != "off":
-        cmd.extend(["--auto", autonomy_level])
-    if model:
-        cmd.extend(["-m", model])
-    cmd.extend(["--output-format", "stream-json"])
-    if session_id:
-        cmd.extend(["-s", session_id])
-
     message_with_context = BOT_CONTEXT + user_message if not session_id else user_message
-    cmd.append(message_with_context)
+    
+    # Build CLI command using the helper function
+    cmd = build_cli_command(
+        prompt=message_with_context,
+        session_id=session_id,
+        autonomy_level=autonomy_level,
+        model=model,
+        output_format="stream-json"
+    )
 
-    logger.info(f"Running droid in cwd: {working_dir}")
+    logger.info(f"Running {get_cli_name()} in cwd: {working_dir}")
+    logger.info(f"Command: {' '.join(cmd[:6])}...")  # Log first part of command
 
     process = subprocess.Popen(
         cmd,
@@ -2038,6 +2323,7 @@ async def handle_message_streaming(user_message, session_id, status_msg, cwd=Non
             event_type = data.get("type", "")
 
             if event_type == "tool_call":
+                # Droid format
                 tool_display = format_tool_call(data)
                 tool_updates.append(tool_display)
                 display_tools = tool_updates[-5:]
@@ -2049,8 +2335,33 @@ async def handle_message_streaming(user_message, session_id, status_msg, cwd=Non
                     except:
                         pass
 
+            elif event_type == "assistant":
+                # Claude Code format - extract tool calls from message content
+                message = data.get("message", {})
+                content = message.get("content", [])
+                for item in content:
+                    if item.get("type") == "tool_use":
+                        tool_name = item.get("name", "unknown")
+                        tool_input = item.get("input", {})
+                        tool_display = format_tool_call({"toolName": tool_name, "input": tool_input})
+                        tool_updates.append(tool_display)
+                        display_tools = tool_updates[-5:]
+                        new_status = "Working...\n\n" + "\n".join(display_tools)
+                        if new_status != last_update:
+                            try:
+                                await status_msg.edit_text(new_status)
+                                last_update = new_status
+                            except:
+                                pass
+
             elif event_type == "completion":
+                # Droid format
                 final_response = data.get("finalText", "")
+                new_session_id = data.get("session_id")
+
+            elif event_type == "result":
+                # Claude Code format
+                final_response = data.get("result", "")
                 new_session_id = data.get("session_id")
 
             elif event_type == "error":
@@ -2078,16 +2389,16 @@ async def handle_message_simple(user_message, session_id, cwd=None, autonomy_lev
     env = os.environ.copy()
     working_dir = cwd or DEFAULT_CWD
 
-    cmd = [DROID_PATH, "exec"]
-    if autonomy_level != "off":
-        cmd.extend(["--auto", autonomy_level])
-    if model:
-        cmd.extend(["-m", model])
-    if session_id:
-        cmd.extend(["-s", session_id])
-
     message_with_context = BOT_CONTEXT + user_message if not session_id else user_message
-    cmd.append(message_with_context)
+    
+    # Build CLI command using the helper function (no streaming)
+    cmd = build_cli_command(
+        prompt=message_with_context,
+        session_id=session_id,
+        autonomy_level=autonomy_level,
+        model=model,
+        output_format=None  # No streaming for simple mode
+    )
 
     result = subprocess.run(
         cmd,
@@ -2254,6 +2565,7 @@ def main():
     app.add_handler(CommandHandler("git", git_command))
     
     # NEW commands
+    app.add_handler(CommandHandler("projects", projects_command))
     app.add_handler(CommandHandler("proj", proj_command))
     app.add_handler(CommandHandler("sync", sync_command))
     app.add_handler(CommandHandler("pull", pull_command))
@@ -2275,6 +2587,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Starting Enhanced Droid Telegram bot...")
+    logger.info(f"CLI backend: {get_cli_name()} ({CLI_TYPE}) at {DROID_PATH}")
     logger.info(f"Allowed users: {ALLOWED_USERS}")
     logger.info(f"Project shortcuts: {list(PROJECT_SHORTCUTS.keys())}")
     logger.info(f"Auto git pull: {AUTO_GIT_PULL}, Auto git push: {AUTO_GIT_PUSH}")
